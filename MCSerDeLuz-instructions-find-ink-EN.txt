@@ -1,0 +1,83 @@
+﻿MCSerDeLuz - HOW TO INSTALL AND USE "BUSCAR TINTA EN EL PAPIRO" (FIND INK IN THE PAPYRUS, NO AI)
+==================================================================================================
+
+The program's windows and reports are in Spanish; this sheet and the HTML manual
+(MCSerDeLuz-manual-buscar-tinta.html) are in English.
+
+Files:
+  buscar_tinta_papiro.py                    the program (Python, Windows and Linux)
+  buscar_tinta_papiro.bat                   Windows launcher (double-click)
+  buscar_tinta_papiro.sh                    Linux launcher
+  MCSerDeLuz-buscar-tinta-papiro.exe        Windows one-file version, nothing to install (if present)
+
+
+WINDOWS, EASY WAY: THE .EXE (if you have MCSerDeLuz-buscar-tinta-papiro.exe)
+----------------------------------------------------------------------------
+1. Double-click it. No Python needed.
+2. SmartScreen may say "Windows protected your PC" (unsigned app): click "More info", then
+   "Run anyway" (Spanish Windows: «Más información» -> «Ejecutar de todas formas»).
+3. The first start takes a few seconds. A console window shows progress, then the chooser opens.
+
+
+WINDOWS WITH PYTHON
+-------------------
+1. Install Python 3.12:   winget install Python.Python.3.12
+   (or https://www.python.org/downloads/ and tick "Add python.exe to PATH")
+2. Close and reopen PowerShell, check:   py --version
+3. Libraries:   py -m pip install numpy zarr tifffile matplotlib scipy
+4. Run: double-click buscar_tinta_papiro.bat, or   py buscar_tinta_papiro.py
+
+
+LINUX (Ubuntu / Debian / Mint; Fedora in brackets)
+--------------------------------------------------
+1. sudo apt install python3 python3-venv python3-tk      [sudo dnf install python3 python3-tkinter]
+2. python3 -m venv ~/.venv-buscar-tinta
+   ~/.venv-buscar-tinta/bin/pip install numpy zarr tifffile matplotlib scipy
+3. Put buscar_tinta_papiro.py and buscar_tinta_papiro.sh in the same folder, then:
+   chmod +x buscar_tinta_papiro.sh
+   ./buscar_tinta_papiro.sh
+   The launcher uses ~/.venv-buscar-tinta (or .venv-buscar-tinta next to the program), else python3.
+   Segments are searched in ~/Desktop, ~/Escritorio, ~/Downloads, ~/Descargas, ~/Documents/Papiro.
+   Sweep cache: ~/.cache/MCSerDeLuz/cache-PHerc1447
+
+
+USAGE
+-----
+Window buttons: «Analizar» (analyse the selected segments), «Elegir otro zip...» / «Elegir carpeta...»
+(pick a segment elsewhere), «Barrido PHerc 1447 (pequeños)...» (sweep all official PHerc 1447
+segments of 180 MB or less; missing ones are DOWNLOADED, about 100 MB each, about 1 GB in total;
+it resumes if interrupted), checkbox «Exportar recortes...» (one cropped PNG per candidate).
+A progress bar with the estimated time remaining and a «Cancelar» button is shown while it works.
+
+Command line (Windows: py buscar_tinta_papiro.py ... / Linux: ./buscar_tinta_papiro.sh ...):
+  segment.zip                     analyse that zip (or folder)
+  --sin-ventana                   no windows: reports and PNGs only, text progress bar in the console
+  --barrido                       PHerc 1447 sweep
+  --barrido --sin-descargas       sweep using only local / cached segments
+  --exportar-recortes             one PNG per candidate: layer 15 + anomaly map, 1 mm scale bar, row/col
+  --limite-mb 180  --min-papiro 5  --z-umbral 4  --rehacer  --cache FOLDER   sweep tuning
+  --ayuda                         all options
+
+
+OUTPUTS
+-------
+Folder MCSerDeLuz-resultados-tinta (single analysis): MCSerDeLuz-informe-tinta-<seg>.txt (Spanish report),
+MCSerDeLuz-mapa-tinta-<seg>.png, MCSerDeLuz-candidatos-tinta-<seg>.png / .csv,
+MCSerDeLuz-recortes-<seg>/MCSerDeLuz-recorte-<seg>-NN.png.
+Folder MCSerDeLuz-barrido-PHerc1447 (sweep): -resumen.txt / .csv, -candidatos.csv, one PNG per
+segment, an overview PNG, and crop folders if requested.
+Circle colours: yellow = bright grain / inclusion, green = fibre or layer separation,
+magenta = loose specks, red = stroke-like cluster, cyan = isolated, unexplained (weak).
+
+
+IMPORTANT
+---------
+Herculaneum ink is carbon-based and barely changes the density of carbonised papyrus. This tool uses
+no AI or machine learning; it only gives WEAK HINTS to look at, not proof of writing.
+Vesuvius Challenge data is CC BY-NC 4.0, and the data agreement forbids making public any revelation
+of hidden text (or related code) without written approval from the Vesuvius Challenge; sharing on
+the official Vesuvius Challenge Discord is allowed. Do not redistribute the raw data.
+
+Credits: sweep orchestration and false-positive controls adapted from first-letters-survey
+(Matteo Bulloni, MIT licence, full notice inside buscar_tinta_papiro.py; no ML checkpoints used).
+Inter-layer idea from Omit (idea only, no code copied). Data: Vesuvius Challenge.

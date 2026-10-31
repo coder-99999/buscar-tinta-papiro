@@ -1,0 +1,136 @@
+﻿MCSerDeLuz - CÓMO INSTALAR Y USAR «BUSCAR TINTA EN EL PAPIRO» (SIN IA)
+=======================================================================
+
+Archivos en el Escritorio:
+  buscar_tinta_papiro.py                    el programa (Python)
+  buscar_tinta_papiro.bat                   lanzador: doble clic para abrirlo (Windows)
+  buscar_tinta_papiro.sh                    lanzador para Linux
+  MCSerDeLuz-manual-buscar-tinta.html       manual completo en inglés (ábrelo con el navegador)
+  MCSerDeLuz-instrucciones-buscar-tinta.txt este archivo
+  MCSerDeLuz-buscar-tinta-papiro.exe        versión que no necesita nada instalado (si está en el Escritorio)
+
+
+OPCIÓN FÁCIL: EL .EXE (si tienes MCSerDeLuz-buscar-tinta-papiro.exe)
+---------------------------------------------------------------------
+1. Doble clic en MCSerDeLuz-buscar-tinta-papiro.exe. No hay que instalar Python ni nada.
+2. Windows SmartScreen puede avisar de que es una aplicación sin firmar ("Windows protegió su PC").
+   Es normal en programas hechos a mano: pulsa «Más información» y luego «Ejecutar de todas formas».
+3. Tarda unos segundos en arrancar la primera vez (se descomprime solo). Se abre una consola negra
+   (ahí va mostrando el progreso) y la ventana para elegir el segmento.
+4. Desde PowerShell también admite las mismas opciones que el .py, por ejemplo:
+       .\MCSerDeLuz-buscar-tinta-papiro.exe --barrido
+       .\MCSerDeLuz-buscar-tinta-papiro.exe --ayuda
+
+
+OPCIÓN CON PYTHON (paso a paso)
+-------------------------------
+Ahora mismo tu PC NO tiene Python (solo el acceso directo de la Microsoft Store, que no sirve).
+
+Paso 1. Instalar Python 3.12 (elige UNA forma):
+  a) Con winget: abre PowerShell (tecla Windows, escribe «PowerShell», Intro) y escribe:
+         winget install Python.Python.3.12
+  b) Desde la web: https://www.python.org/downloads/  ->  «Download Python 3.12.x».
+     Al instalar, MARCA la casilla «Add python.exe to PATH» y pulsa «Install Now».
+
+Paso 2. Cierra PowerShell y ábrelo de nuevo (para que encuentre Python). Comprueba:
+         py --version
+     Debe decir «Python 3.12...».
+
+Paso 3. Instala las librerías (copia la línea tal cual):
+         py -m pip install numpy zarr tifffile matplotlib scipy
+     (numcodecs viene con zarr; scipy es opcional pero lo hace más rápido)
+     Si «py» no existe, usa:  python -m pip install numpy zarr tifffile matplotlib scipy
+
+Paso 4. Ejecutar:
+  - Doble clic en buscar_tinta_papiro.bat (en el Escritorio).
+  - O en PowerShell:
+         cd $HOME\Desktop
+         py buscar_tinta_papiro.py
+
+
+EN LINUX (Ubuntu, Debian, Mint...)
+----------------------------------
+El .exe es solo para Windows. En Linux se usa el .py con el lanzador buscar_tinta_papiro.sh.
+
+Paso 1. Python, entorno virtual y tkinter (las ventanas):
+         sudo apt install python3 python3-venv python3-tk
+     (Fedora: sudo dnf install python3 python3-tkinter)
+
+Paso 2. Crea un entorno virtual e instala ahí las librerías (no toca el Python del sistema):
+         python3 -m venv ~/.venv-buscar-tinta
+         ~/.venv-buscar-tinta/bin/pip install numpy zarr tifffile matplotlib scipy
+
+Paso 3. Pon buscar_tinta_papiro.py y buscar_tinta_papiro.sh en la misma carpeta y ejecuta:
+         chmod +x buscar_tinta_papiro.sh
+         ./buscar_tinta_papiro.sh
+     El lanzador usa solo ~/.venv-buscar-tinta (o .venv-buscar-tinta junto al programa) y, si no
+     existe, python3. Admite las mismas opciones, por ejemplo:
+         ./buscar_tinta_papiro.sh --sin-ventana --exportar-recortes
+     Busca segmentos en ~/Escritorio, ~/Desktop, ~/Descargas, ~/Downloads y ~/Documentos/Papiro.
+     La caché del barrido va a ~/.cache/MCSerDeLuz/cache-PHerc1447
+
+
+CÓMO SE USA
+-----------
+Al abrirlo busca los segmentos (zip o carpeta) en el Escritorio, Descargas y Documentos\Papiro.
+  - «Analizar»: analiza el segmento o segmentos elegidos de la lista.
+  - «Elegir otro zip...» / «Elegir carpeta...»: si el segmento está en otro sitio.
+  - «Barrido PHerc 1447 (pequeños)...»: recorre los segmentos oficiales de PHerc 1447 de 180 MB o
+    menos. Usa los que ya tengas y los demás los DESCARGA de internet (datos abiertos del Vesuvius
+    Challenge): unos 100 MB por segmento, cerca de 1 GB en total, en
+    %LOCALAPPDATA%\MCSerDeLuz\cache-PHerc1447  (puedes borrar esa carpeta cuando acabes).
+    Si se corta, al repetirlo continúa donde iba. Te pregunta si quieres descargar o solo usar
+    lo que ya tienes.
+  - Casilla «Exportar recortes de cada candidato»: guarda además una imagen por candidato (capa 15
+    a la izquierda, mapa de anomalía a la derecha, barra de escala de 1 mm y coordenadas fila/col).
+  - Mientras trabaja sale una barra de progreso con el tiempo que queda aproximado y un botón
+    «Cancelar». Sin ventana (--sin-ventana) la barra aparece como texto en la consola.
+
+Desde PowerShell (con el .py; con el .exe es igual cambiando «py buscar_tinta_papiro.py»):
+  py buscar_tinta_papiro.py RUTA\segmento.zip                 analiza ese zip
+  py buscar_tinta_papiro.py RUTA\segmento.zip --sin-ventana   solo informe y PNG, sin ventanas
+  py buscar_tinta_papiro.py --sin-ventana                      analiza todos los que encuentre
+  py buscar_tinta_papiro.py --barrido                          barrido de PHerc 1447
+  py buscar_tinta_papiro.py --barrido --sin-descargas          barrido solo con lo que ya tienes
+  py buscar_tinta_papiro.py --exportar-recortes                guarda un PNG recortado por candidato
+  py buscar_tinta_papiro.py --ayuda                            todas las opciones
+
+
+RESULTADOS
+----------
+Análisis normal: carpeta «MCSerDeLuz-resultados-tinta» junto al programa:
+  MCSerDeLuz-informe-tinta-<segmento>.txt     informe en español (candidatos, controles, qué es cada uno)
+  MCSerDeLuz-mapa-tinta-<segmento>.png        los mapas con los candidatos marcados
+  MCSerDeLuz-candidatos-tinta-<segmento>.png  recortes de los mejores candidatos
+  MCSerDeLuz-candidatos-tinta-<segmento>.csv  tabla para Excel
+  MCSerDeLuz-recortes-<segmento>\MCSerDeLuz-recorte-<segmento>-NN.png   (con --exportar-recortes)
+Barrido: carpeta «MCSerDeLuz-barrido-PHerc1447» junto al programa:
+  MCSerDeLuz-barrido-PHerc1447-resumen.txt / .csv   tabla: segmento, MB, % de papiro, candidatos y qué son
+  MCSerDeLuz-barrido-PHerc1447-candidatos.csv       todos los candidatos con sus controles
+  MCSerDeLuz-barrido-<segmento>.png                 mapa de cada segmento
+  MCSerDeLuz-barrido-PHerc1447.png                  vista general
+  MCSerDeLuz-recortes-<segmento>\                   recortes (si marcaste la casilla)
+
+Colores de los círculos: amarillo = grano brillante / inclusión, verde = fibra o separación de
+capas, magenta = motas sueltas, rojo = grupo tipo trazo, cian = aislado sin explicar.
+
+
+AVISO IMPORTANTE
+----------------
+La tinta de Herculano es de carbono y casi no cambia la densidad del papiro carbonizado.
+Este programa no usa IA: solo da PISTAS DÉBILES para mirar con calma, NO pruebas de escritura.
+Los datos del Vesuvius Challenge tienen licencia CC BY-NC 4.0 y sus normas piden NO publicar
+texto oculto que creas haber encontrado sin que el equipo del Vesuvius Challenge lo revise antes.
+
+
+SI ALGO FALLA
+-------------
+- «Falta: numpy...»: repite el paso 3 (en Linux, el paso 2 de Linux).
+- Linux: «No module named tkinter»: sudo apt install python3-tk  (o usa --sin-ventana).
+- «py no se reconoce»: repite el paso 1 y cierra y abre PowerShell.
+- Sin memoria: añade  --reduccion 2
+- Copia el texto de la consola negra y envíamelo.
+
+Créditos: controles y orquestación del barrido adaptados de first-letters-survey (Matteo Bulloni,
+licencia MIT; aviso completo dentro de buscar_tinta_papiro.py). Idea de buscar en el espacio
+entre capas: Omit (solo la idea; no se copió código). Datos: Vesuvius Challenge (CC BY-NC 4.0).

@@ -1,0 +1,67 @@
+name: build-exe
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: python -m pip install --upgrade pip numpy zarr numcodecs tifffile matplotlib scipy pyinstaller
+      - name: PyInstaller
+        run: >
+          pyinstaller --onefile --console --noconfirm --name MCSerDeLuz-buscar-tinta-papiro
+          --collect-all numcodecs --collect-all zarr --collect-all tifffile
+          --collect-submodules scipy.ndimage --hidden-import scipy._lib.messagestream
+          --hidden-import matplotlib.backends.backend_tkagg --hidden-import matplotlib.backends.backend_agg
+          buscar_tinta_papiro.py
+      - name: Prueba (--help y segmento sintético)
+        shell: pwsh
+        run: |
+          .\dist\MCSerDeLuz-buscar-tinta-papiro.exe --help
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          python crear_prueba.py
+          .\dist\MCSerDeLuz-buscar-tinta-papiro.exe MCSerDeLuz-prueba-20990101000000.zip --sin-ventana --exportar-recortes --salida prueba-out
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-ChildItem prueba-out
+          if (-not (Test-Path prueba-out\MCSerDeLuz-informe-tinta-20990101000000.txt)) { exit 1 }
+          Get-FileHash dist\MCSerDeLuz-buscar-tinta-papiro.exe -Algorithm SHA256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MCSerDeLuz-buscar-tinta-papiro
+          path: dist/MCSerDeLuz-buscar-tinta-papiro.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: |
+          sudo apt-get update && sudo apt-get install -y python3-tk
+          python -m pip install --upgrade pip numpy zarr numcodecs tifffile matplotlib scipy pyinstaller
+      - name: PyInstaller (Linux)
+        run: >
+          pyinstaller --onefile --console --noconfirm --name MCSerDeLuz-buscar-tinta-papiro-linux
+          --collect-all numcodecs --collect-all zarr --collect-all tifffile
+          --collect-submodules scipy.ndimage --hidden-import scipy._lib.messagestream
+          --hidden-import matplotlib.backends.backend_tkagg --hidden-import matplotlib.backends.backend_agg
+          buscar_tinta_papiro.py
+      - name: Prueba (--help y segmento sintético)
+        run: |
+          ./dist/MCSerDeLuz-buscar-tinta-papiro-linux --help
+          python crear_prueba.py
+          ./dist/MCSerDeLuz-buscar-tinta-papiro-linux MCSerDeLuz-prueba-20990101000000.zip --sin-ventana --exportar-recortes --salida prueba-out
+          ls -R prueba-out
+          test -f prueba-out/MCSerDeLuz-informe-tinta-20990101000000.txt
+          sha256sum dist/MCSerDeLuz-buscar-tinta-papiro-linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MCSerDeLuz-buscar-tinta-papiro-linux
+          path: dist/MCSerDeLuz-buscar-tinta-papiro-linux

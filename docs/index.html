@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>MCSerDeLuz – Buscar tinta en el papiro: user manual</title>
+<style>
+ body{font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:900px;margin:2em auto;padding:0 1em;line-height:1.55;color:#222}
+ h1{font-size:1.7em;border-bottom:3px solid #8a5a2b;padding-bottom:.3em}
+ h2{margin-top:2em;color:#6b4220;border-bottom:1px solid #ddd}
+ code,pre{background:#f4f1ec;border-radius:4px}
+ code{padding:0 .3em} pre{padding:.8em;overflow-x:auto}
+ table{border-collapse:collapse;width:100%;margin:1em 0} th,td{border:1px solid #ccc;padding:.4em .6em;text-align:left;vertical-align:top} th{background:#f4f1ec}
+ .warn{background:#fff4e0;border-left:5px solid #e09b2d;padding:.6em 1em}
+ .rule{background:#fde8e8;border-left:5px solid #c0392b;padding:.6em 1em}
+ nav ul{columns:2} .dot{display:inline-block;width:.9em;height:.9em;border-radius:50%;border:1px solid #555;vertical-align:middle}
+ footer{margin-top:3em;font-size:.9em;color:#666}
+</style>
+</head>
+<body>
+<h1>Buscar tinta en el papiro – user manual</h1>
+<p><strong>MCSerDeLuz · version 2.0 (2026-10-31)</strong>. A classical tool that needs no AI. It looks for weak signs of ink in surface-volume segments of the Herculaneum papyrus <strong>PHerc. 1447</strong> from the Vesuvius Challenge. It runs on Windows and Linux. The program's windows and reports are in Spanish; this manual is in English.</p>
+
+<div class="warn"><strong>Read this first.</strong> Herculaneum ink is carbon-based. In X-ray CT its density is almost the same as carbonised papyrus. Everything this tool reports is a <em>weak hint</em> to look at more closely. It is never proof of writing.</div>
+
+<nav><h2>Contents</h2><ul>
+<li><a href="#install-win">Install on Windows</a></li><li><a href="#install-linux">Install on Linux</a></li>
+<li><a href="#usage">Usage</a></li><li><a href="#outputs">Outputs</a></li>
+<li><a href="#methods">Methods</a></li><li><a href="#controls">Controls and classification</a></li>
+<li><a href="#limits">Limitations</a></li><li><a href="#licence">Data licence and publication rule</a></li>
+<li><a href="#trouble">Troubleshooting</a></li><li><a href="#credits">Credits</a></li></ul></nav>
+
+<h2 id="install-win">1. Install on Windows</h2>
+<h3>Easy way: the one-file .exe</h3>
+<p>Double-click <code>MCSerDeLuz-buscar-tinta-papiro.exe</code>. You do not need Python. The exe is unsigned, so SmartScreen may show “Windows protected your PC”. Click <em>More info</em> and then <em>Run anyway</em> (on Spanish Windows: <em>Más información</em> → <em>Ejecutar de todas formas</em>). The first start takes a few seconds while the file unpacks itself. The exe is Windows-only.</p>
+<h3>With Python</h3>
+<pre>winget install Python.Python.3.12          # or python.org, tick "Add python.exe to PATH"
+py --version                               # in a NEW PowerShell window
+py -m pip install numpy zarr tifffile matplotlib scipy</pre>
+<p>Then double-click <code>buscar_tinta_papiro.bat</code>, or run <code>py buscar_tinta_papiro.py</code>. The tool runs without scipy, but more slowly.</p>
+
+<h2 id="install-linux">2. Install on Linux</h2>
+<pre>sudo apt install python3 python3-venv python3-tk        # Fedora: sudo dnf install python3 python3-tkinter
+python3 -m venv ~/.venv-buscar-tinta
+~/.venv-buscar-tinta/bin/pip install numpy zarr tifffile matplotlib scipy
+chmod +x buscar_tinta_papiro.sh
+./buscar_tinta_papiro.sh</pre>
+<p>Keep <code>buscar_tinta_papiro.py</code> and <code>buscar_tinta_papiro.sh</code> in the same folder. The launcher looks for a Python in this order: <code>.venv-buscar-tinta</code> next to the program, then <code>~/.venv-buscar-tinta</code>, then <code>python3</code>. If none of them has the libraries, it prints these instructions. Without <code>python3-tk</code> you can still use <code>--sin-ventana</code>.</p>
+
+<h2 id="usage">3. Usage</h2>
+<p>When it starts, the tool looks for segment zips or folders (zarr v2/v3, or TIFF layer folders) in these places: the program folder, Desktop/Escritorio, Downloads/Descargas and Documents/Papiro. On Linux it also checks the XDG desktop folder.</p>
+<table>
+<tr><th>Window control</th><th>What it does</th></tr>
+<tr><td>Analizar</td><td>Analyses the selected segments.</td></tr>
+<tr><td>Elegir otro zip… / Elegir carpeta…</td><td>Picks a segment from somewhere else.</td></tr>
+<tr><td>Barrido PHerc 1447 (pequeños)…</td><td>Sweeps every official PHerc 1447 segment of ≤180 MB. Segments you already have are used directly. Missing ones are <strong>downloaded</strong> from the public open-data bucket at about 100 MB each (about 1 GB in total) and cached. If the sweep is interrupted, it resumes where it stopped. The tool asks before downloading.</td></tr>
+<tr><td>Exportar recortes de cada candidato</td><td>Also saves one cropped PNG per candidate. It shows layer 15 on the left and the anomaly map on the right, with a 1 mm scale bar and row/column axes.</td></tr>
+<tr><td>Progress window</td><td>Shows a progress bar, the current step, the elapsed time, an estimate of the time remaining, and a <em>Cancelar</em> button.</td></tr>
+</table>
+<p>Command line (Windows: <code>py buscar_tinta_papiro.py</code> or the exe; Linux: <code>./buscar_tinta_papiro.sh</code>):</p>
+<pre>segment.zip                      analyse one zip or folder
+--sin-ventana                    no windows: report + PNGs, text progress bar with ETA
+--exportar-recortes              per-candidate crop PNGs
+--barrido                        PHerc 1447 sweep
+--barrido --sin-descargas        sweep with local/cached segments only
+--limite-mb 180 --min-papiro 5 --z-umbral 4 --rehacer --cache DIR
+--ayuda                          all options</pre>
+<p>The cache is in <code>%LOCALAPPDATA%\MCSerDeLuz\cache-PHerc1447</code> on Windows and <code>~/.cache/MCSerDeLuz/cache-PHerc1447</code> on Linux. You can delete it when you are done.</p>
+
+<h2 id="outputs">4. Outputs</h2>
+<table>
+<tr><th>Mode</th><th>Files</th></tr>
+<tr><td>Single analysis<br><code>MCSerDeLuz-resultados-tinta/</code></td><td><code>MCSerDeLuz-informe-tinta-&lt;seg&gt;.txt</code> (Spanish report)<br><code>MCSerDeLuz-mapa-tinta-&lt;seg&gt;.png</code>, <code>MCSerDeLuz-candidatos-tinta-&lt;seg&gt;.png/.csv</code><br><code>MCSerDeLuz-recortes-&lt;seg&gt;/MCSerDeLuz-recorte-&lt;seg&gt;-NN.png</code></td></tr>
+<tr><td>Sweep<br><code>MCSerDeLuz-barrido-PHerc1447/</code></td><td><code>…-resumen.txt/.csv</code> (segment, MB, % papyrus, candidates by type), <code>…-candidatos.csv</code> (all controls)<br><code>MCSerDeLuz-barrido-&lt;seg&gt;.png</code>, overview <code>MCSerDeLuz-barrido-PHerc1447.png</code>, crop folders</td></tr>
+</table>
+<p>Circle colours: <span class="dot" style="background:gold"></span> bright grain / inclusion · <span class="dot" style="background:limegreen"></span> fibre or layer separation · <span class="dot" style="background:magenta"></span> loose specks · <span class="dot" style="background:red"></span> stroke-like cluster · <span class="dot" style="background:cyan"></span> isolated, unexplained (weak).</p>
+
+<h2 id="methods">5. Methods</h2>
+<p>All detection is classical image processing with numpy and scipy. No neural network or ML model is used.</p>
+<ol>
+<li><strong>Reading.</strong> Only the needed layers are read, chunk by chunk, straight from the zip. A low-resolution level gives a cheap estimate of how much of the segment is papyrus.</li>
+<li><strong>Density z-score.</strong> A large Gaussian background is subtracted (normalised convolution, so holes do not bleed into the result). The remainder is turned into local z-scores.</li>
+<li><strong>Texture.</strong> Fibre coherence comes from the Sobel structure tensor, alongside the local standard deviation. Ink tends to break the fibre pattern.</li>
+<li><strong>Front minus back.</strong> Mean of layers 14–16 minus the mean of layers 17–20. Ink sits on the written surface.</li>
+<li><strong>Crackle</strong> (optional). A small-scale cracking signal.</li>
+<li>These maps are combined into a score. Blobs of stroke size (30–80 px; 1 mm ≈ 115.7 px) are kept. Blobs near segment edges or holes are rejected (distance transform).</li>
+<li><strong>Sweep</strong> (the an.py thresholds). It uses z&nbsp;&gt;&nbsp;4 and blob sizes of 25–160 px with area ≥300, at ≥45 px from edges, with voids excluded, over layers 10–21. Segments with less than 5% papyrus are skipped.</li>
+</ol>
+
+<h2 id="controls">6. False-positive controls and classification</h2>
+<p>Each candidate gets these controls:</p>
+<ul>
+<li>the per-layer contrast of the blob against its surrounding ring, for layers 10–21;</li>
+<li>the contrast on the neighbouring sides (layers 10–12 and 19–21);</li>
+<li>a <em>reverse-depth</em> control: 14–16 minus 10–13, compared with the forward 14–16 minus 17–20;</li>
+<li>the saturated fraction (≥ p99.5);</li>
+<li>elongation (structure-tensor eigenvalues);</li>
+<li>the number of neighbouring candidates within 250 px;</li>
+<li>the distance to an edge.</li>
+</ul>
+<p>Classification rules, applied in this order:</p>
+<table>
+<tr><th>Type</th><th>Rule</th></tr>
+<tr><td>Bright grain / inclusion</td><td>Bright on both neighbouring sides (&gt;1.0), or more than 30% saturated.</td></tr>
+<tr><td>Loose specks</td><td>Seen only in the crackle map, or area &lt;300, or crackle-dominated.</td></tr>
+<tr><td>Fibre / layer separation</td><td>Elongation ≥2.5, or seen only in the fibre or inter-layer maps, or the reverse depth is about as strong as the forward depth.</td></tr>
+<tr><td>Stroke-like cluster</td><td>At least 2 neighbours, the surface is stronger than both sides (+0.5), and forward depth exceeds reverse depth by more than 0.3.</td></tr>
+<tr><td>Isolated, unexplained</td><td>Anything else (weak).</td></tr>
+</table>
+<p>In the author's sweep of the small PHerc 1447 segments, no stroke-like clusters were found. Most candidates were grains, fibres or specks.</p>
+
+<h2 id="limits">7. Limitations</h2>
+<ul>
+<li>Carbon ink has very low density contrast, so the signal is often below the noise. If the tool finds nothing, that does not mean there is no ink.</li>
+<li>Segmentation errors, layer separations, mineral grains and fibre crossings can all mimic ink. The controls reduce these false positives but cannot remove them.</li>
+<li>The thresholds were tuned by hand on a few segments. They are not calibrated against ground truth.</li>
+<li>Only level-0 surface volumes are analysed. Segments larger than 180 MB are outside the default sweep (see <code>--limite-mb</code>).</li>
+<li>Results without scipy can differ slightly, because fallback filters are used.</li>
+</ul>
+
+<h2 id="licence">8. Data licence and publication rule</h2>
+<p>Vesuvius Challenge data is licensed <strong>CC BY-NC 4.0</strong> unless stated otherwise: attribution is required and commercial use is not allowed. Some assets add their own terms. See <a href="https://scrollprize.org/data">scrollprize.org/data</a>.</p>
+<div class="rule"><strong>Do not publish hidden text without approval.</strong> Under the Vesuvius Challenge data agreement, you may not disclose or publish any revelation of hidden text, or the related code, outside the official Vesuvius Challenge Discord without written consent from the Vesuvius Challenge and its Papyrology Team. This covers transcriptions, translations, interpretations and ink-label images. The raw data must not be redistributed either. If you think you see letters, share them only on the official Discord.</div>
+
+<h2 id="trouble">9. Troubleshooting</h2>
+<ul>
+<li><em>“Falta: numpy…”</em>: install the libraries (section 1 or 2).</li>
+<li><em>py is not recognised</em>: install Python, then open a new PowerShell window.</li>
+<li><em>No module named tkinter</em> (Linux): run <code>sudo apt install python3-tk</code>, or use <code>--sin-ventana</code>.</li>
+<li>Out of memory: add <code>--reduccion 2</code>.</li>
+<li>Sweep interrupted: run it again and it resumes. Add <code>--rehacer</code> to recompute everything.</li>
+</ul>
+
+<h2 id="credits">10. Credits</h2>
+<ul>
+<li>The sweep orchestration (resumable per-thread HTTPS downloads, atomic writes) and the false-positive control ideas are adapted from <em>first-letters-survey</em> by Matteo Bulloni (MIT licence; the full notice is in the source). Only that code was adapted. None of its ML checkpoints are used.</li>
+<li>The idea of looking at the inter-layer space comes from Omit. The idea only was reimplemented; no code was copied.</li>
+<li>Sweep thresholds come from the earlier MCSerDeLuz script <code>an.py</code>.</li>
+<li>Data: Vesuvius Challenge open data (PHerc. 1447), CC BY-NC 4.0.</li>
+</ul>
+<footer>Private manual for the MCSerDeLuz repository. It is not published.</footer>
+</body>
+</html>
