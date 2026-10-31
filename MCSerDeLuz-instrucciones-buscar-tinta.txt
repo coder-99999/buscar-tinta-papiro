@@ -7,17 +7,18 @@ Archivos en el Escritorio:
   buscar_tinta_papiro.sh                    lanzador para Linux
   MCSerDeLuz-manual-buscar-tinta.html       manual completo en inglés (ábrelo con el navegador)
   MCSerDeLuz-instrucciones-buscar-tinta.txt este archivo
-  MCSerDeLuz-buscar-tinta-papiro.exe        versión que no necesita nada instalado (si está en el Escritorio)
+  MCSerDeLuz-buscar-tinta-papiro.exe        versión para Windows que no necesita nada instalado (LA MÁS FÁCIL)
 
 
-OPCIÓN FÁCIL: EL .EXE (si tienes MCSerDeLuz-buscar-tinta-papiro.exe)
----------------------------------------------------------------------
+OPCIÓN FÁCIL (RECOMENDADA): EL .EXE
+-----------------------------------
 1. Doble clic en MCSerDeLuz-buscar-tinta-papiro.exe. No hay que instalar Python ni nada.
 2. Windows SmartScreen puede avisar de que es una aplicación sin firmar ("Windows protegió su PC").
    Es normal en programas hechos a mano: pulsa «Más información» y luego «Ejecutar de todas formas».
 3. Tarda unos segundos en arrancar la primera vez (se descomprime solo). Se abre una consola negra
    (ahí va mostrando el progreso) y la ventana para elegir el segmento.
-4. Desde PowerShell también admite las mismas opciones que el .py, por ejemplo:
+4. Al terminar, la consola pone «Pulsa Intro para cerrar esta ventana...».
+5. Desde PowerShell también admite las mismas opciones que el .py, por ejemplo:
        .\MCSerDeLuz-buscar-tinta-papiro.exe --barrido
        .\MCSerDeLuz-buscar-tinta-papiro.exe --ayuda
 
