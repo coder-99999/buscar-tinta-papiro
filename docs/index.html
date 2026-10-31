@@ -56,6 +56,8 @@ chmod +x buscar_tinta_papiro.sh
 <tr><td>Elegir otro zip… / Elegir carpeta…</td><td>Picks a segment from somewhere else.</td></tr>
 <tr><td>Barrido PHerc 1447 (pequeños)…</td><td>Sweeps every official PHerc 1447 segment of ≤180 MB. Segments you already have are used directly. Missing ones are <strong>downloaded</strong> from the public open-data bucket at about 100 MB each (about 1 GB in total) and cached. If the sweep is interrupted, it resumes where it stopped. The tool asks before downloading.</td></tr>
 <tr><td>Exportar recortes de cada candidato</td><td>Also saves one cropped PNG per candidate. It shows layer 15 on the left and the anomaly map on the right, with a 1 mm scale bar and row/column axes.</td></tr>
+<tr><td>Ajustes avanzados ▸</td><td>Collapsed by default. Front/back layers, stroke size, threshold percentile, maximum candidates (0 = no limit, the default), no-crackle option, downsampling, results folder, DPI, and a <em>Barrido</em> section (no downloads, max segment MB, min papyrus %, z threshold, redo, download folder). Inputs are checked with clear Spanish messages and remembered; <em>Restablecer valores</em> resets them.</td></tr>
+<tr><td>Candidates window</td><td>After each analysis, a scrollable window shows a thumbnail of every candidate.</td></tr>
 <tr><td>Progress window</td><td>Shows a progress bar, the current step, the elapsed time, an estimate of the time remaining, and a <em>Cancelar</em> button.</td></tr>
 </table>
 <p>Command line (Windows: <code>py buscar_tinta_papiro.py</code> or the exe; Linux: <code>./buscar_tinta_papiro.sh</code>):</p>

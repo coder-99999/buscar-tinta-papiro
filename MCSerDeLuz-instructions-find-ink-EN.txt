@@ -47,6 +47,9 @@ Window buttons: «Analizar» (analyse the selected segments), «Elegir otro zip.
 (pick a segment elsewhere), «Barrido PHerc 1447 (pequeños)...» (sweep all official PHerc 1447
 segments of 180 MB or less; missing ones are DOWNLOADED, about 100 MB each, about 1 GB in total;
 it resumes if interrupted), checkbox «Exportar recortes...» (one cropped PNG per candidate).
+«Ajustes avanzados ▸» (collapsed by default) holds the same settings as the command-line options,
+including a «Barrido» section; values are validated, remembered, and «Restablecer valores» resets them.
+All candidates are shown (no cap), with a scrollable thumbnail window after each analysis.
 A progress bar with the estimated time remaining and a «Cancelar» button is shown while it works.
 
 Command line (Windows: py buscar_tinta_papiro.py ... / Linux: ./buscar_tinta_papiro.sh ...):

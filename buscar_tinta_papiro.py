@@ -162,7 +162,12 @@ MARGEN_BORDE = 30                   # se descartan manchas a menos de esto del b
 PESOS = {"densidad": 0.35, "textura": 0.25, "capas": 0.25, "crujido": 0.15}
 PERCENTIL_UMBRAL = 98.5             # qué parte alta de la puntuación se considera mancha
 MAX_PIXELES = 30_000_000            # por encima, se reduce la resolución para no agotar la memoria
-MAX_CANDIDATOS = 15
+MAX_CANDIDATOS = 0      # 0 = todos los candidatos (en informe, mapas, recortes y ventana)
+
+
+def tope(lista, n):
+    """Los n primeros, o todos si n <= 0."""
+    return list(lista) if not n or n <= 0 else list(lista)[:n]
 NOMBRE_RESULTADOS = "MCSerDeLuz-resultados-tinta"
 # ====================================================================================
 
@@ -1085,17 +1090,20 @@ def analizar(ruta, args):
     txt = salida / f"MCSerDeLuz-informe-tinta-{seg}.txt"
     csvp = salida / f"MCSerDeLuz-candidatos-tinta-{seg}.csv"
     fig = figura_mapas(res, capa, m, z_dens, z_text, z_capas, z_cruj, punt)
-    fig.savefig(png_mapa, dpi=args.dpi)
+    guardar_figura(fig, png_mapa, args.dpi)
     fig2 = figura_candidatos(res, capa, punt, m)
     if fig2 is not None:
-        fig2.savefig(png_cand, dpi=args.dpi)
+        guardar_figura(fig2, png_cand, args.dpi)
+        if not args.sin_ventana:
+            res["miniaturas"] = miniaturas_candidatos(res, capa, punt, m)
+            plt.close(fig2)          # en pantalla se ven en la ventana con barra de desplazamiento
     elif png_cand.exists():
         png_cand.unlink()
     res["t_total"] = time.time() - t0
     escribir_informe(txt, res, png_mapa, png_cand if fig2 is not None else None, csvp)
-    escribir_csv(csvp, candidatos[: max(args.max_candidatos, 50)])
+    escribir_csv(csvp, candidatos)
     if getattr(args, "exportar_recortes", False) and candidatos:
-        res["recortes"] = str(exportar_recortes(salida, seg, ce, punt, candidatos[: args.max_candidatos], f,
+        res["recortes"] = str(exportar_recortes(salida, seg, ce, punt, tope(candidatos, args.max_candidatos), f,
                                                 f"capa {centro}", "puntuación combinada", max(umbral * 1.6, 1.0),
                                                 mascara=m > 0)[0])
     res.update({"png_mapa": png_mapa, "png_cand": png_cand if fig2 is not None else None, "txt": txt,
@@ -1287,14 +1295,16 @@ def analizar_barrido_segmento(ruta, args, salida, seg_nombre, tam_mb, origen):
     manchas de 25-160 px a más de 45 px de bordes y agujeros, sin huecos oscuros, y controles."""
     t0 = time.time()
     A = argparse.Namespace(**vars(args))
-    A.delante, A.detras = [14, 15, 16], [17, 18, 19, 20]
+    A.delante, A.detras = list(args.delante), list(args.detras)     # 14-16 / 17-20 salvo que se cambien
     PROG.fase(0.5 if origen.startswith("internet") else 0.0, 0.6 if origen.startswith("internet") else 0.2, "leyendo capas 10-21...")
     pila, idx, I = abrir_y_leer(ruta, A, extra=range(10, 22))
     PROG.fase(0.6 if origen.startswith("internet") else 0.2, 0.97, "calculando mapas del barrido...")
     f = I["f"]
     seg = I["vol"].segmento
     L = lambda c: pila[idx[c]].astype(np.float32)
-    capas_mask = [c for c in range(14, 21) if c in idx]
+    dl, dt, ce = I["delante"], I["detras"], I["centro"]
+    rv = I["inverso"] or [c for c in range(10, 14) if c in idx]
+    capas_mask = [c for c in sorted(set(dl + dt)) if c in idx]
     m0 = (pila[[idx[c] for c in capas_mask]] > 0).all(axis=0)
     papiro = float((pila[[idx[c] for c in range(10, 22) if c in idx]].max(axis=0) > 0).mean())
     out = dict(seg=seg, nombre=seg_nombre, mb=tam_mb, origen=origen, H=I["H"], W=I["W"], f=f, papiro=papiro,
@@ -1311,9 +1321,9 @@ def analizar_barrido_segmento(ruta, args, salida, seg_nombre, tam_mb, origen):
         out["estado"] = "omitido: casi todo es borde o agujero"
         return out, None
     s_ = lambda v: v / f
-    S = (L(14) + L(15) + L(16)) / 3
-    B = (L(17) + L(18) + L(19) + L(20)) / 4
-    Brev = (L(10) + L(11) + L(12) + L(13)) / 4      # control: orden de profundidad invertido
+    S = sum(L(c) for c in dl) / len(dl)
+    B = sum(L(c) for c in dt) / len(dt)
+    Brev = sum(L(c) for c in rv) / len(rv)          # control: orden de profundidad invertido
     maps = {}
     maps["densidad"] = zG(G(bgsub(S, m0, s_(50)), s_(6)), core, s_(150))
     PROG.poner(1/7)
@@ -1331,11 +1341,18 @@ def analizar_barrido_segmento(ruta, args, salida, seg_nombre, tam_mb, origen):
     PROG.poner(4/7)
     inv = zG(G(bgsub(S - Brev, m0, s_(50)), s_(6)), core, s_(150))
     PROG.poner(6/7)
-    maps["crackle"] = zG(G(np.abs(S - G(S, s_(1.5))), s_(6)), core, s_(150))
+    if not getattr(args, "sin_crujido", False):
+        maps["crackle"] = zG(G(np.abs(S - G(S, s_(1.5))), s_(6)), core, s_(150))
     PROG.poner(5/7)
     Sm = G(S, s_(4))
     hueco = float(np.percentile(Sm[core], 10))
     p995 = float(np.percentile(S[core], 99.5))
+    # tamaños del barrido: 25-160 px; si cambias los del trazo en los ajustes, se usan esos
+    if (args.tam_min, args.tam_max) == (TAM_TRAZO_MIN, TAM_TRAZO_MAX):
+        tmin, tmax, amin = 25, 160, 300
+    else:
+        tmin, tmax = args.tam_min, args.tam_max
+        amin = max(1, int(0.3 * tmin * tmin))
     brutos = []
     for k, M in maps.items():
         lab, n = etiquetar((M > args.z_umbral) & core)
@@ -1346,7 +1363,7 @@ def analizar_barrido_segmento(ruta, args, salida, seg_nombre, tam_mb, origen):
             area = int(reg.sum()) * f * f
             h = (sl[0].stop - sl[0].start) * f
             w = (sl[1].stop - sl[1].start) * f
-            if area < 300 or max(h, w) > 160 or max(h, w) < 25:
+            if area < amin or max(h, w) > tmax or max(h, w) < tmin:
                 continue
             if Sm[sl][reg].mean() < hueco:   # hueco oscuro: no es papiro
                 continue
@@ -1369,7 +1386,7 @@ def analizar_barrido_segmento(ruta, args, salida, seg_nombre, tam_mb, origen):
             cands.append(c)
     for c in cands:
         controles(c, c["_sl"], c["_reg"], pila, idx, f, S, m0, dist, p995, maps["entre_capas"], inv,
-                  I["lado_a"], I["lado_b"], [14, 15, 16])
+                  I["lado_a"], I["lado_b"], dl)
     agrupar(cands)
     for n_, c in enumerate(cands, 1):
         c["n"] = n_
@@ -1381,16 +1398,362 @@ def analizar_barrido_segmento(ruta, args, salida, seg_nombre, tam_mb, origen):
     out["t"] = time.time() - t0
     # figura del segmento
     comb = np.max(np.stack([np.clip(M, 0, None) for M in maps.values()]), 0)
-    vista = dict(capa=L(15), m0=m0, comb=np.where(core, comb, np.nan))
+    vista = dict(capa=L(ce), m0=m0, comb=np.where(core, comb, np.nan))
     png = salida / f"MCSerDeLuz-barrido-{seg}.png"
-    figura_barrido_segmento(out, vista, png, args.dpi)
+    figura_barrido_segmento(dict(out, candidatos=tope(cands, args.max_candidatos)), vista, png, args.dpi)
     out["png"] = str(png)
     if getattr(args, "exportar_recortes", False) and cands:
-        out["recortes"] = str(exportar_recortes(salida, seg, L(15), comb, cands, f, "capa 15",
-                                                "máximo z de los cinco mapas", 8, mascara=m0)[0])
+        out["recortes"] = str(exportar_recortes(salida, seg, L(ce), comb, tope(cands, args.max_candidatos), f, f"capa {ce}",
+                                                f"máximo z de los {len(maps)} mapas", 8, mascara=m0)[0])
     k = max(1, int(math.ceil(max(S.shape) / 600)))
-    mini = L(15)[::k, ::k]
+    mini = L(ce)[::k, ::k]
     return out, (mini, k * f)
+
+
+# ====================================================================================
+#  TEXTOS SIN SOLAPES: marcas de los ejes que caben, etiquetas que se apartan y comprobación
+# ====================================================================================
+SOLAPES = []          # (png, n_solapes, detalle) de cada figura guardada en esta ejecución
+
+
+def _renderer(fig):
+    if not hasattr(fig.canvas, "get_renderer"):
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        FigureCanvasAgg(fig)
+    fig.canvas.draw()
+    return fig.canvas.get_renderer()
+
+
+def envolver(texto, fig, fontsize, fraccion=0.96):
+    """Parte un título largo en líneas que quepan a lo ancho de la figura."""
+    import textwrap
+    ancho_pt = fig.get_figwidth() * 72 * fraccion
+    n = max(20, int(ancho_pt / (fontsize * 0.56)))
+    return "\n".join(textwrap.fill(linea, n) for linea in texto.split("\n"))
+
+
+def _bbox_vale(b):
+    return b is not None and np.all(np.isfinite([b.x0, b.y0, b.x1, b.y1])) and b.width > 0 and b.height > 0
+
+
+def _cruzan(a, b, pad=0.0):
+    return (a.x0 < b.x1 + pad and b.x0 < a.x1 + pad and a.y0 < b.y1 + pad and b.y0 < a.y1 + pad)
+
+
+def _marcas_dibujadas(eje):
+    """Etiquetas de las marcas que matplotlib va a dibujar de verdad (solo las visibles dentro del eje)."""
+    try:
+        ticks = eje._update_ticks()
+    except Exception:
+        ticks = eje.get_major_ticks()
+    out = []
+    for t in ticks:
+        for lab in (t.label1, t.label2):
+            if lab.get_visible() and lab.get_text().strip():
+                out.append(lab)
+    return out
+
+
+def textos_dibujados(fig):
+    """Todos los textos visibles de la figura: títulos, rótulos de ejes, marcas, etiquetas y notas."""
+    from matplotlib.text import Text
+    txt = []
+    for t in fig.texts:
+        txt.append(t)
+    if getattr(fig, "_suptitle", None) is not None:
+        txt.append(fig._suptitle)
+    for ax in fig.axes:
+        if not ax.get_visible():
+            continue
+        txt += [ax.title, ax._left_title, ax._right_title]
+        ejes = [ax.xaxis, ax.yaxis] if ax.axison else []
+        for e in ejes:
+            txt.append(e.label)
+            txt += _marcas_dibujadas(e)
+            txt.append(e.offsetText)
+        txt += [t for t in ax.texts]
+    vistos, res = set(), []
+    for t in txt:
+        if t is None or id(t) in vistos or not isinstance(t, Text):
+            continue
+        vistos.add(id(t))
+        if t.get_visible() and t.get_text().strip():
+            res.append(t)
+    return res
+
+
+def _caja_texto(t, r):
+    """Caja del texto (y de su fondo); en las etiquetas con línea guía NO cuenta la línea, solo el texto."""
+    import matplotlib.text as _mt
+    b = _mt.Text.get_window_extent(t, r)
+    p = t.get_bbox_patch()
+    if p is not None:
+        try:
+            from matplotlib.transforms import Bbox
+            b = Bbox.union([b, p.get_window_extent(r)])
+        except Exception:
+            pass
+    return b
+
+
+def comprobar_solapes(fig, pad=0.5, pares=None):
+    """Devuelve la lista de solapes (pares de textos que se pisan) y de textos cortados por el borde."""
+    r = _renderer(fig)
+    W, H = fig.bbox.width, fig.bbox.height
+    cajas = []
+    for t in textos_dibujados(fig):
+        try:
+            b = _caja_texto(t, r)
+        except Exception:
+            continue
+        if _bbox_vale(b):
+            cajas.append((t, b))
+    problemas = []
+    for i in range(len(cajas)):
+        ti, bi = cajas[i]
+        if bi.x0 < -1 or bi.y0 < -1 or bi.x1 > W + 1 or bi.y1 > H + 1:
+            problemas.append(f"cortado por el borde: {ti.get_text()[:40]!r}")
+        for j in range(i + 1, len(cajas)):
+            tj, bj = cajas[j]
+            if _cruzan(bi, bj, -pad):
+                problemas.append(f"{ti.get_text()[:30]!r} pisa {tj.get_text()[:30]!r}")
+                if pares is not None:
+                    pares.append((ti, tj))
+    return problemas
+
+
+from matplotlib.ticker import MaxNLocator as _MaxNLocator
+
+
+class MarcasQueCaben(_MaxNLocator):
+    """Localizador que, en cada dibujo, pone solo las marcas cuyas etiquetas caben en el largo real del eje
+    (en píxeles). Así siguen sin pisarse aunque la ventana se haga más pequeña."""
+
+    def __init__(self, tam_letra_pt=8.0):
+        super().__init__(nbins=6, steps=[1, 2, 2.5, 5, 10], min_n_ticks=1)
+        self.tam = float(tam_letra_pt)
+        self.factor = 1.0
+
+    def __call__(self):
+        try:
+            ax = self.axis.axes
+            bb = ax.get_window_extent()
+            es_x = self.axis is ax.xaxis
+            largo = bb.width if es_x else bb.height
+            fs = self.tam * ax.figure.dpi / 72
+            vmin, vmax = self.axis.get_view_interval()
+            cifras = max(len(f"{vmin:.0f}"), len(f"{vmax:.0f}"), 2)
+            hueco = (cifras * 0.62 * fs + 1.4 * fs) if es_x else (2.3 * fs)
+            self.set_params(nbins=int(max(1, min(9, largo / (hueco * self.factor)))))
+        except Exception:
+            pass
+        return super().__call__()
+
+
+def _tam_marcas(eje):
+    from matplotlib.font_manager import FontProperties
+    t = eje._major_tick_kw.get("labelsize") or matplotlib.rcParams["xtick.labelsize"]
+    try:
+        return FontProperties(size=t).get_size_in_points()
+    except Exception:
+        return 8.0
+
+
+def _ticks_que_caben(fig, iteraciones=10):
+    """Pone MarcasQueCaben en todos los ejes con números y, si aún se tocan, los espacia más."""
+    for ax in fig.axes:
+        if not ax.axison:
+            continue
+        for eje in (ax.xaxis, ax.yaxis):
+            loc = eje.get_major_locator()
+            if type(loc).__name__ in ("NullLocator", "FixedLocator"):
+                continue
+            if not isinstance(loc, MarcasQueCaben):
+                eje.set_major_locator(MarcasQueCaben(_tam_marcas(eje)))
+    for _ in range(iteraciones):
+        r = _renderer(fig)
+        cambiado = False
+        for ax in fig.axes:
+            if not ax.axison:
+                continue
+            for eje in (ax.xaxis, ax.yaxis):
+                loc = eje.get_major_locator()
+                if not isinstance(loc, MarcasQueCaben):
+                    continue
+                cajas = sorted([l.get_window_extent(r) for l in _marcas_dibujadas(eje)], key=lambda b: (b.x0, b.y0))
+                if any(_cruzan(cajas[k], cajas[k + 1], 2) for k in range(len(cajas) - 1)) and loc.factor < 8:
+                    loc.factor *= 1.3
+                    cambiado = True
+        if not cambiado:
+            break
+
+
+def poner_titulo(fig, texto, fontsize):
+    """Título general que se vuelve a partir en líneas si cambia el ancho de la ventana."""
+    fig._mcs_titulo = (texto, fontsize)
+    fig.suptitle(envolver(texto, fig, fontsize), fontsize=fontsize)
+
+
+def reacomodar(fig, *_):
+    """Vuelve a distribuir títulos, marcas y etiquetas para el tamaño actual (se llama al cambiar la ventana)."""
+    if getattr(fig, "_mcs_ocupado", False):
+        return
+    fig._mcs_ocupado = True
+    try:
+        for a in fig.__dict__.get("_mcs_anotaciones", []):
+            try:
+                a.remove()
+            except Exception:
+                pass
+        fig._mcs_anotaciones = []
+        fig._mcs_etiquetas = list(fig.__dict__.get("_mcs_items", []))
+        acabar_figura(fig, getattr(fig, "_mcs_rect", (0, 0, 1, 1)))
+        fig.canvas.draw_idle()
+    finally:
+        fig._mcs_ocupado = False
+
+
+def vigilar_ventana(fig):
+    """En pantalla: cada vez que cambia el tamaño de la ventana se recolocan los textos."""
+    try:
+        fig.canvas.mpl_connect("resize_event", lambda e: reacomodar(fig))
+    except Exception:
+        pass
+
+
+def marcar_etiquetas(ax, items):
+    """Apunta etiquetas para colocar después (x, y, texto, color, radio en datos)."""
+    ax.figure.__dict__.setdefault("_mcs_etiquetas", []).append((ax, items))
+
+
+def _colocar_etiquetas(fig):
+    """Pone cada etiqueta junto a su círculo; si choca, prueba otras posiciones más lejos con una línea guía."""
+    pend = fig.__dict__.pop("_mcs_etiquetas", [])
+    if not pend:
+        return
+    fig._mcs_items = list(pend)
+    anot = fig.__dict__.setdefault("_mcs_anotaciones", [])
+    r = _renderer(fig)
+    ocupadas = []
+    for t in textos_dibujados(fig):
+        try:
+            b = t.get_window_extent(r)
+            if _bbox_vale(b):
+                ocupadas.append(b)
+        except Exception:
+            pass
+    angulos = [45, -45, 135, -135, 0, 180, 90, -90, 22, -22, 158, -158, 67, -67, 113, -113,
+               11, -11, 169, -169, 79, -79, 101, -101]
+    for ax, items in pend:
+        caja_ax = ax.get_window_extent(r)
+        px_por_dato = caja_ax.width / max(1e-9, abs(np.diff(ax.get_xlim())[0]))
+        circulos = []
+        for (x, y, s, col, rad) in items:
+            cx, cy = ax.transData.transform((x, y))
+            rr = max(3.0, rad * px_por_dato)
+            circulos.append((cx - rr, cy - rr, cx + rr, cy + rr))
+        for (x, y, s, col, rad) in items:
+            rr_pt = max(3.0, rad * px_por_dato) * 72 / fig.dpi
+            mejor = None
+            for anillo in range(30):
+                d = rr_pt + 3 + anillo * 6
+                for ang in angulos:
+                    dx, dy = d * math.cos(math.radians(ang)), d * math.sin(math.radians(ang))
+                    a = ax.annotate(s, (x, y), xytext=(dx, dy), textcoords="offset points", color=col,
+                                    fontsize=9, fontweight="bold", ha="center", va="center",
+                                    bbox=dict(boxstyle="round,pad=0.12", fc="black", ec="none", alpha=0.55),
+                                    annotation_clip=False, zorder=6)
+                    a.set_in_layout(False)
+                    b = a.get_window_extent(r).padded(1.5)
+                    dentro = (b.x0 >= caja_ax.x0 and b.x1 <= caja_ax.x1 and b.y0 >= caja_ax.y0 and b.y1 <= caja_ax.y1)
+                    choques = sum(_cruzan(b, o) for o in ocupadas)
+                    tapa = sum(b.x0 < c[2] and c[0] < b.x1 and b.y0 < c[3] and c[1] < b.y1 for c in circulos)
+                    nota = choques * 100 + (0 if dentro else 50) + tapa
+                    if mejor is None or nota < mejor[0]:
+                        if mejor is not None:
+                            mejor[1].remove()
+                        mejor = (nota, a, b, anillo)
+                    else:
+                        a.remove()
+                    if nota == 0:
+                        break
+                if mejor[0] == 0:
+                    break
+            nota, a, b, anillo = mejor
+            if anillo > 0 or nota > 0:          # lejos del círculo: línea guía hasta él
+                a.arrow_patch = None
+                a.remove()
+                a = ax.annotate(s, (x, y), xytext=a.xyann, textcoords="offset points", color=col, fontsize=9,
+                                fontweight="bold", ha="center", va="center",
+                                bbox=dict(boxstyle="round,pad=0.12", fc="black", ec="none", alpha=0.55),
+                                arrowprops=dict(arrowstyle="-", color=col, lw=0.8, shrinkA=0, shrinkB=rr_pt),
+                                annotation_clip=False, zorder=6)
+                a.set_in_layout(False)
+            anot.append(a)
+            ocupadas.append(b)
+
+
+def acabar_figura(fig, rect=(0, 0, 1, 1)):
+    """Distribuye los textos sin que se pisen y devuelve la lista de solapes que queden (debería estar vacía)."""
+    fig._mcs_rect = tuple(rect)
+    rect = list(rect)
+    st = getattr(fig, "_suptitle", None)
+    if getattr(fig, "_mcs_titulo", None) and st is not None:
+        st.set_text(envolver(fig._mcs_titulo[0], fig, fig._mcs_titulo[1]))
+    if st is not None and st.get_text():
+        st.set_y(0.995); st.set_va("top")
+        r = _renderer(fig)
+        h = st.get_window_extent(r).height / fig.bbox.height
+        rect[3] = min(rect[3], 0.99 - h - 0.008)
+    # títulos de cada eje: si son más anchos que su eje, se parten en líneas (sin quitar nada)
+    import textwrap
+    r0 = _renderer(fig)
+    for ax in fig.axes:
+        t = ax.title
+        if not t.get_text():
+            continue
+        crudo = ax.__dict__.setdefault("_mcs_titulo", t.get_text())
+        t.set_text(crudo)
+        ancho_t, ancho_ax = t.get_window_extent(r0).width, ax.get_window_extent(r0).width
+        if ancho_t > ancho_ax * 1.02 and ancho_ax > 20:
+            lineas = crudo.split("\n")
+            largo = max(len(l) for l in lineas)
+            n = max(10, int(largo * ancho_ax / ancho_t * 0.97))
+            t.set_text("\n".join(textwrap.fill(l, n) for l in lineas))
+    wp = hp = 1.08
+    for intento in range(6):
+        for _ in range(2):
+            try:
+                fig.tight_layout(rect=rect, w_pad=wp, h_pad=hp)
+            except Exception:
+                pass
+            _ticks_que_caben(fig)
+        pares = []
+        if not comprobar_solapes(fig, pares=pares):
+            break
+        titulos = {id(ax.title): ax for ax in fig.axes}
+        for par in pares:            # un título que pisa una marca (p. ej. la de arriba de la barra de color): más alto
+            for t in par:
+                ax = titulos.get(id(t))
+                if ax is not None:
+                    ax._mcs_pad = ax.__dict__.get("_mcs_pad", 6.0) + 5.0
+                    ax._set_title_offset_trans(ax._mcs_pad)
+        wp += 1.2; hp += 0.6            # títulos o marcas de ejes vecinos que se tocan: más aire entre ejes
+    _colocar_etiquetas(fig)
+    return comprobar_solapes(fig)
+
+
+def guardar_figura(fig, png, dpi, rect=(0, 0, 1, 1), avisar=True):
+    """acabar_figura + savefig (sin volver a recolocar nada) y apunta el resultado de la comprobación."""
+    dpi0 = fig.get_dpi()
+    fig.set_dpi(dpi)
+    problemas = acabar_figura(fig, rect)
+    fig.savefig(png, dpi=dpi)
+    fig.set_dpi(dpi0)
+    SOLAPES.append((str(png), len(problemas), problemas[:5]))
+    if problemas and avisar:
+        print(f"      AVISO: {len(problemas)} textos se pisan en {Path(png).name}: {problemas[:3]}")
+    return problemas
 
 
 def figura_barrido_segmento(out, v, png, dpi):
@@ -1405,16 +1768,14 @@ def figura_barrido_segmento(out, v, png, dpi):
     ax[1].imshow(comb, cmap="magma", vmin=0, vmax=8, extent=ext)
     ax[1].set_title("máximo z (densidad, pérdida de fibra, textura, entre capas, crackle)")
     for A in ax:
-        for c in out["candidatos"][:60]:
+        for c in out["candidatos"]:
             A.add_patch(Circle((c["col"], c["fila"]), 45, fill=False, ec=TIPOS[c["tipo"]][1], lw=1.3))
-        for c in out["candidatos"][:5]:
-            A.text(c["col"] + 50, c["fila"], str(c["n"]), color="white", fontsize=11, weight="bold")
+        marcar_etiquetas(A, [(c["col"], c["fila"], str(c["n"]), TIPOS[c["tipo"]][1], 45) for c in out["candidatos"]])
         A.set_xticks([]); A.set_yticks([])
     ley = LEYENDA
-    fig.suptitle(f"PHerc 1447 {out['seg']} — {len(out['candidatos'])} candidatos (z>4, 25-160 px). Colores: {ley}. "
-                 "Pistas débiles, no pruebas.", fontsize=10)
-    fig.tight_layout()
-    fig.savefig(png, dpi=dpi)
+    poner_titulo(fig, f"PHerc 1447 {out['seg']} — {len(out['candidatos'])} candidatos (z>4, 25-160 px). Colores: {ley}. "
+                          "Pistas débiles, no pruebas.", 10)
+    guardar_figura(fig, png, dpi)
     plt.close(fig)
 
 
@@ -1518,7 +1879,7 @@ def escribir_resumen_barrido(salida, filas, args, t):
         L.append(f"{r['seg']:<15} {r['mb']:>5.0f} {pap:>7} {len(r['candidatos']):>5}  {est}")
     L += ["", "MEJORES CANDIDATOS DE CADA SEGMENTO (fila, columna en px del segmento)", "-" * 78]
     for r in filas:
-        for c in r["candidatos"][:5]:
+        for c in r["candidatos"]:
             L.append(f"{r['seg']}  #{c['n']:<3} ({c['fila']},{c['col']})  {c['alto']}x{c['ancho']} px  "
                      f"z={c['z']:.1f}  mapas: {'+'.join(c['mapas'])}  ->  {c['que_es']}  "
                      f"[superficie {c['sup']:+.1f}, vecinas {c['vec_a']:+.1f}/{c['vec_b']:+.1f}, "
@@ -1586,14 +1947,15 @@ def figura_resumen_barrido(salida, filas, minis, dpi):
         v = mini[mini > 0]
         lo, hi = np.percentile(v, [1, 99.5]) if v.size else (0, 255)
         a.imshow(mini, cmap="gray", vmin=lo, vmax=hi, extent=(0, mini.shape[1] * k, mini.shape[0] * k, 0))
-        for c in r["candidatos"][:60]:
+        for c in r["candidatos"]:
             a.add_patch(Circle((c["col"], c["fila"]), 60, fill=False, ec=TIPOS[c["tipo"]][1], lw=1.2))
+        marcar_etiquetas(a, [(c["col"], c["fila"], str(c["n"]), TIPOS[c["tipo"]][1], 60) for c in r["candidatos"]])
         a.set_title(f"{r['seg']}  {r['mb']:.0f} MB  papiro {r['papiro'] * 100:.0f}%  cand. {len(r['candidatos'])}", fontsize=10)
     ley = LEYENDA
-    fig.suptitle("MCSerDeLuz — barrido sin IA de PHerc 1447 (capa 15). " + ley + ". Pistas débiles, no pruebas.", fontsize=11)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    poner_titulo(fig, "MCSerDeLuz — barrido sin IA de PHerc 1447 (capa 15). " + ley + ". Pistas débiles, no pruebas.", 11)
     png = salida / "MCSerDeLuz-barrido-PHerc1447.png"
-    fig.savefig(png, dpi=dpi)
+    guardar_figura(fig, png, dpi)
+    vigilar_ventana(fig)
     return fig
 
 
@@ -1646,13 +2008,11 @@ def exportar_recortes(base, seg, capa, mapa, cands, f, nombre_capa, nombre_mapa,
                    ha="center", va="bottom", fontsize=9, weight="bold")
             a.set_xlabel("columna (px)", fontsize=8); a.set_ylabel("fila (px)", fontsize=8)
             a.tick_params(labelsize=7)
-        fig.suptitle(f"PHerc 1447 - segmento {seg} - candidato #{c['n']}  fila {c['fila']}, columna {c['col']}  "
-                     f"({c['alto']}x{c['ancho']} px = {c['tam'] * TAM_PIXEL_UM / 1000:.2f} mm)\n"
-                     f"qué es: {c.get('que_es', '-')}   |   píxel = {TAM_PIXEL_UM} µm   |   pista débil, no prueba",
-                     fontsize=10)
-        fig.tight_layout(rect=[0, 0.01, 1, 0.92])
+        poner_titulo(fig, f"PHerc 1447 - segmento {seg} - candidato #{c['n']}  fila {c['fila']}, columna {c['col']}  "
+                              f"({c['alto']}x{c['ancho']} px = {c['tam'] * TAM_PIXEL_UM / 1000:.2f} mm)\n"
+                              f"qué es: {c.get('que_es', '-')}   |   píxel = {TAM_PIXEL_UM} µm   |   pista débil, no prueba", 10)
         p = dest / f"MCSerDeLuz-recorte-{seg}-{c['n']:02d}.png"
-        fig.savefig(p, dpi=dpi)
+        guardar_figura(fig, p, dpi)
         hechos.append(p)
     print(f"      recortes:   {len(hechos)} PNG en {dest}")
     return dest, hechos
@@ -1694,28 +2054,49 @@ def figura_mapas(res, capa, m, z_dens, z_text, z_capas, z_cruj, punt):
         a.set_title(tit, fontsize=12)
         a.tick_params(labelsize=8)
         fig.colorbar(im, ax=a, fraction=0.035, pad=0.01)
-    top = res["candidatos"][: res["args"].max_candidatos]
+    top = tope(res["candidatos"], res["args"].max_candidatos)
     for a in (ejes.ravel()[0], ejes.ravel()[5]):
+        items = []
         for c in top:
             r = max(c["tam"] * 0.75, 25)
             col_ = TIPOS[c["tipo"]][1]
             a.add_patch(Circle((c["col"], c["fila"]), r, fill=False, color=col_, lw=1.4))
-            a.text(c["col"] + r, c["fila"] - r, str(c["n"]), color=col_, fontsize=9, fontweight="bold")
-    fig.suptitle(f"MCSerDeLuz - PHerc - segmento {res['segmento']} - indicios de tinta SIN IA "
-                 f"({len(res['candidatos'])} candidatos, se marcan {len(top)}). "
-                 "Son pistas débiles, no pruebas.\nColores: " + LEYENDA, fontsize=12)
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
+            items.append((c["col"], c["fila"], str(c["n"]), col_, r))
+        marcar_etiquetas(a, items)
+    poner_titulo(fig, f"MCSerDeLuz - PHerc - segmento {res['segmento']} - indicios de tinta SIN IA "
+                          f"({len(res['candidatos'])} candidatos, se marcan {len(top)}). "
+                          "Son pistas débiles, no pruebas.\nColores: " + LEYENDA, 12)
+    vigilar_ventana(fig)
     return fig
 
 
+def _panel_candidato(a, c, capa, punt, f, lo, hi, umbral):
+    """Dibuja un candidato: capa alrededor, contorno rojo sobre el umbral, círculo del color de su tipo."""
+    r = int(max(100, c["tam"] * 2) / f)
+    yc, xc = int(c["fila"] / f), int(c["col"] / f)
+    y0, y1 = max(0, yc - r), min(capa.shape[0], yc + r)
+    x0, x1 = max(0, xc - r), min(capa.shape[1], xc + r)
+    ext = (x0 * f, x1 * f, y1 * f, y0 * f)
+    a.imshow(capa[y0:y1, x0:x1], cmap="gray", vmin=lo, vmax=hi, extent=ext, interpolation="bicubic")
+    try:
+        a.contour(np.linspace(x0 * f, x1 * f, x1 - x0), np.linspace(y0 * f, y1 * f, y1 - y0),
+                  punt[y0:y1, x0:x1], levels=[umbral], colors="red", linewidths=1.0)
+    except Exception:
+        pass
+    a.add_patch(Circle((c["col"], c["fila"]), max(c["tam"] * 0.75, 25), fill=False, color=TIPOS[c["tipo"]][1], lw=1.2))
+    a.set_title(f"#{c['n']}  fila {c['fila']}, col {c['col']}\n{c['tam']} px ({c['tam'] * TAM_PIXEL_UM / 1000:.2f} mm), "
+                f"punt. {c['media']:.2f}\n{c['que_es']}", fontsize=9)
+    a.tick_params(labelsize=7)
+
+
 def figura_candidatos(res, capa, punt, m):
-    top = res["candidatos"][: min(12, res["args"].max_candidatos)]
+    top = tope(res["candidatos"], res["args"].max_candidatos)
     if not top:
         return None
     f = res["f"]
     cols = 4
     filas = int(math.ceil(len(top) / cols))
-    fig, ejes = plt.subplots(filas, cols, figsize=(16, 4.2 * filas), squeeze=False)
+    fig, ejes = plt.subplots(filas, cols, figsize=(17, 4.6 * filas + 0.8), squeeze=False)
     try:
         fig.canvas.manager.set_window_title(f"MCSerDeLuz - candidatos - {res['segmento']}")
     except Exception:
@@ -1724,25 +2105,102 @@ def figura_candidatos(res, capa, punt, m):
     for a in ejes.ravel():
         a.axis("off")
     for a, c in zip(ejes.ravel(), top):
-        r = int(max(100, c["tam"] * 2) / f)
-        yc, xc = int(c["fila"] / f), int(c["col"] / f)
-        y0, y1 = max(0, yc - r), min(capa.shape[0], yc + r)
-        x0, x1 = max(0, xc - r), min(capa.shape[1], xc + r)
-        ext = (x0 * f, x1 * f, y1 * f, y0 * f)
-        a.imshow(capa[y0:y1, x0:x1], cmap="gray", vmin=lo, vmax=hi, extent=ext, interpolation="bicubic")
-        try:
-            a.contour(np.linspace(x0 * f, x1 * f, x1 - x0), np.linspace(y0 * f, y1 * f, y1 - y0),
-                      punt[y0:y1, x0:x1], levels=[res["umbral"]], colors="red", linewidths=1.0)
-        except Exception:
-            pass
-        a.add_patch(Circle((c["col"], c["fila"]), max(c["tam"] * 0.75, 25), fill=False, color=TIPOS[c["tipo"]][1], lw=1.2))
-        a.set_title(f"#{c['n']}  fila {c['fila']}, col {c['col']}\n{c['tam']} px ({c['tam'] * TAM_PIXEL_UM / 1000:.2f} mm), "
-                    f"punt. {c['media']:.2f} - {c['que_es']}", fontsize=9)
-        a.axis("on"); a.tick_params(labelsize=7)
-    fig.suptitle(f"Segmento {res['segmento']} - capa {res['centro']} alrededor de los mejores candidatos "
-                 f"(rojo = zona sobre el umbral). Pistas débiles, no pruebas.", fontsize=12)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+        a.axis("on")
+        _panel_candidato(a, c, capa, punt, f, lo, hi, res["umbral"])
+    poner_titulo(fig, f"Segmento {res['segmento']} - capa {res['centro']} alrededor de los {len(top)} candidatos "
+                          f"(rojo = zona sobre el umbral). Pistas débiles, no pruebas.", 12)
     return fig
+
+
+def miniaturas_candidatos(res, capa, punt, m, dpi=80):
+    """Una imagen PNG pequeña (en memoria) por candidato, para la ventana con barra de desplazamiento."""
+    from matplotlib.figure import Figure
+    lo, hi = _estirar(capa, m)
+    out = []
+    for c in tope(res["candidatos"], res["args"].max_candidatos):
+        fig = Figure(figsize=(3.7, 4.1))
+        a = fig.subplots()
+        _panel_candidato(a, c, capa, punt, res["f"], lo, hi, res["umbral"])
+        buf = io.BytesIO()
+        guardar_figura(fig, buf, dpi, avisar=False)
+        SOLAPES[-1] = (f"miniatura #{c['n']} de {res['segmento']}",) + SOLAPES[-1][1:]
+        out.append((c["n"], buf.getvalue()))
+    return out
+
+
+def esperar_ventanas(ventanas):
+    """Muestra los mapas y las ventanas de miniaturas a la vez y espera a que se cierren todas.
+    (plt.show() solo atiende su propia ventana de Tk; la de miniaturas se quedaba gris.)"""
+    if not ventanas:
+        plt.show()
+        plt.close("all")
+        return
+    plt.show(block=False)
+    while True:
+        vivas = []
+        for v in ventanas:
+            try:
+                if v.winfo_exists():
+                    v.update()
+                    vivas.append(v)
+            except Exception:
+                pass
+        ventanas = vivas
+        figs = plt.get_fignums()
+        if not ventanas and not figs:
+            break
+        if figs:
+            try:
+                plt.pause(0.04)
+            except Exception:
+                time.sleep(0.04)
+        else:
+            time.sleep(0.04)
+    plt.close("all")
+
+
+def ventana_candidatos(res):
+    """Ventana con TODAS las miniaturas de los candidatos y barra de desplazamiento. Devuelve la ventana."""
+    import tkinter as tk, base64
+    minis = res.get("miniaturas") or []
+    if not minis:
+        return None
+    raiz = tk.Tk()
+    raiz.title(f"MCSerDeLuz - {len(minis)} candidatos - {res['segmento']}")
+    alto = min(900, raiz.winfo_screenheight() - 120)
+    tk.Label(raiz, text=f"Segmento {res['segmento']}: {len(minis)} candidatos (todos). Usa la rueda del ratón o la barra "
+                        "para ver el resto. Pistas débiles, no pruebas.", wraplength=900).pack(fill="x", padx=6, pady=4)
+    marco = tk.Frame(raiz); marco.pack(fill="both", expand=True)
+    lienzo = tk.Canvas(marco, highlightthickness=0)
+    barra = tk.Scrollbar(marco, orient="vertical", command=lienzo.yview)
+    lienzo.configure(yscrollcommand=barra.set)
+    barra.pack(side="right", fill="y"); lienzo.pack(side="left", fill="both", expand=True)
+    dentro = tk.Frame(lienzo)
+    lienzo.create_window((0, 0), window=dentro, anchor="nw")
+    raiz._imagenes = []
+    cols = 3
+    for i, (n, datos) in enumerate(minis):
+        img = tk.PhotoImage(master=raiz, data=base64.b64encode(datos).decode("ascii"))
+        raiz._imagenes.append(img)
+        tk.Label(dentro, image=img, name=f"candidato_{n}", bd=1, relief="solid").grid(row=i // cols, column=i % cols, padx=4, pady=4)
+    dentro.update_idletasks()
+    lienzo.configure(scrollregion=lienzo.bbox("all"), width=dentro.winfo_reqwidth(), height=min(alto, dentro.winfo_reqheight()))
+
+    def rueda(e):
+        paso = -1 if (getattr(e, "num", 0) == 4 or getattr(e, "delta", 0) > 0) else 1
+        lienzo.yview_scroll(paso * 2, "units")
+    for ev in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        raiz.bind_all(ev, rueda)
+    propias = set(raiz.image_names())      # solo cuentan las miniaturas que de verdad tiene esta ventana
+    n_widgets = sum(1 for w in dentro.winfo_children()
+                    if isinstance(w, tk.Label) and str(w.cget("image")) in propias and w.winfo_reqheight() > 50)
+    # con los mapas de matplotlib ya abiertos (otro Tk), hay que dibujarla ya; si no, se queda gris
+    dentro.bind("<Configure>", lambda e: lienzo.configure(scrollregion=lienzo.bbox("all")))
+    raiz.update()
+    lienzo.configure(scrollregion=lienzo.bbox("all"), width=dentro.winfo_reqwidth(), height=min(alto, dentro.winfo_reqheight()))
+    raiz.update()
+    print(f"      ventana de candidatos {res['segmento']}: {n_widgets} miniaturas", flush=True)
+    return raiz
 
 
 # ====================================================================================
@@ -1798,7 +2256,7 @@ def escribir_informe(p, res, png_mapa, png_cand, csvp):
     L.append("")
     L.append("MEJORES CANDIDATOS (fila y columna en píxeles del segmento, como en el cuaderno de Colab)")
     L.append("-" * 72)
-    top = res["candidatos"][: a.max_candidatos]
+    top = tope(res["candidatos"], a.max_candidatos)
     if not top:
         L.append("Ninguna mancha cumple los criterios. No hay indicios con estos métodos.")
     else:
@@ -1856,21 +2314,189 @@ def escribir_informe(p, res, png_mapa, png_cand, csvp):
 
 
 # ====================================================================================
+#  AJUSTES AVANZADOS (los mismos que las opciones de la línea de órdenes)
+# ====================================================================================
+CLAVES_AJUSTES = ["delante", "detras", "tam_min", "tam_max", "percentil", "max_candidatos", "sin_crujido",
+                  "reduccion", "salida", "dpi", "sin_descargas", "limite_mb", "min_papiro", "z_umbral", "rehacer", "cache"]
+AJUSTES_POR_DEFECTO = dict(delante=list(CAPAS_DELANTE), detras=list(CAPAS_DETRAS), tam_min=TAM_TRAZO_MIN,
+                           tam_max=TAM_TRAZO_MAX, percentil=PERCENTIL_UMBRAL, max_candidatos=MAX_CANDIDATOS,
+                           sin_crujido=False, reduccion=0, salida="", dpi=110,
+                           sin_descargas=False, limite_mb=180.0, min_papiro=5.0, z_umbral=4.0, rehacer=False, cache="")
+REDUCCIONES = [("Automática", 0), ("1", 1), ("2", 2), ("4", 4), ("8", 8)]
+
+
+def archivo_ajustes():
+    """Archivo JSON con los ajustes avanzados, en la carpeta de configuración del usuario."""
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return base / "MCSerDeLuz" / "buscar-tinta-ajustes.json"
+
+
+def cargar_ajustes():
+    try:
+        d = json.loads(archivo_ajustes().read_text(encoding="utf-8"))
+        return {k: d[k] for k in CLAVES_AJUSTES if k in d}
+    except Exception:
+        return {}
+
+
+def guardar_ajustes(d):
+    try:
+        p = archivo_ajustes()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({k: d[k] for k in CLAVES_AJUSTES if k in d}, ensure_ascii=False, indent=1),
+                     encoding="utf-8")
+        return p
+    except Exception as e:
+        print(f"      (no pude guardar los ajustes: {e})")
+        return None
+
+
+def carpeta_resultados_defecto():
+    return str(CARPETA_PROGRAMA / NOMBRE_RESULTADOS)
+
+
+def validar_ajustes(t):
+    """t = textos de la ventana. Devuelve (valores, errores) con mensajes en español para el usuario."""
+    err, v = [], {}
+
+    def capas(nombre, texto):
+        partes = [x for x in re.split(r"[,\s;]+", str(texto).strip()) if x]
+        if not partes or not all(x.isdigit() for x in partes):
+            err.append(f"«{nombre}» tiene que ser una lista de números de capa separados por comas, por ejemplo 14,15,16.")
+            return []
+        lst = [int(x) for x in partes]
+        if any(c > 200 for c in lst):
+            err.append(f"«{nombre}»: los segmentos tienen unas 31 capas (0-30); {max(lst)} es demasiado.")
+        if len(set(lst)) != len(lst):
+            err.append(f"«{nombre}»: hay capas repetidas.")
+        return lst
+
+    def entero(nombre, texto, lo, hi, ejemplo):
+        s = str(texto).strip()
+        if not re.fullmatch(r"-?\d+", s):
+            err.append(f"«{nombre}» tiene que ser un número entero, por ejemplo {ejemplo}.")
+            return None
+        n = int(s)
+        if not lo <= n <= hi:
+            err.append(f"«{nombre}» tiene que estar entre {lo} y {hi} (has puesto {n}).")
+            return None
+        return n
+
+    v["delante"] = capas("Capas delante", t.get("delante", ""))
+    v["detras"] = capas("Capas detrás", t.get("detras", ""))
+    comunes = sorted(set(v["delante"]) & set(v["detras"]))
+    if comunes:
+        err.append("Una capa no puede estar a la vez delante y detrás: " + ", ".join(map(str, comunes)) + ".")
+    v["tam_min"] = entero("Tamaño mínimo del trazo", t.get("tam_min", ""), 1, 5000, 30)
+    v["tam_max"] = entero("Tamaño máximo", t.get("tam_max", ""), 1, 5000, 80)
+    if v["tam_min"] is not None and v["tam_max"] is not None and v["tam_max"] <= v["tam_min"]:
+        err.append(f"El tamaño máximo ({v['tam_max']} px) tiene que ser mayor que el mínimo ({v['tam_min']} px).")
+    s = str(t.get("percentil", "")).strip().replace(",", ".")
+    try:
+        p = float(s)
+        if not 50 <= p < 100:
+            raise ValueError
+        v["percentil"] = p
+    except ValueError:
+        err.append("El umbral (percentil) tiene que ser un número entre 50 y 99,99, por ejemplo 98,5.")
+    v["max_candidatos"] = entero("Máximo de candidatos", t.get("max_candidatos", ""), 0, 10 ** 6, "0 (sin límite)")
+    v["dpi"] = entero("Calidad de imagen (DPI)", t.get("dpi", ""), 50, 600, 110)
+    red = dict(REDUCCIONES)
+    if str(t.get("reduccion", "")) not in red:
+        err.append("«Reducción de resolución» tiene que ser Automática, 1, 2, 4 u 8.")
+    v["reduccion"] = red.get(str(t.get("reduccion", "")), 0)
+    v["sin_crujido"] = bool(t.get("sin_crujido", False))
+
+    def decimal(nombre, texto, lo, hi, ejemplo):
+        try:
+            x = float(str(texto).strip().replace(",", "."))
+            if not lo <= x <= hi:
+                raise ValueError
+            return x
+        except ValueError:
+            err.append(f"«{nombre}» tiene que ser un número entre {lo:g} y {hi:g}, por ejemplo {ejemplo}.")
+            return None
+    v["sin_descargas"] = bool(t.get("sin_descargas", False))
+    v["rehacer"] = bool(t.get("rehacer", False))
+    v["limite_mb"] = decimal("Tamaño máximo de segmento (MB)", t.get("limite_mb", "180"), 1, 100000, 180)
+    v["min_papiro"] = decimal("Mínimo de papiro (%)", t.get("min_papiro", "5"), 0, 100, 5)
+    v["z_umbral"] = decimal("Umbral z del barrido", t.get("z_umbral", "4"), 0.5, 50, "4,0")
+    cd = str(t.get("cache", "")).strip().strip('"')
+    if not cd or os.path.normcase(os.path.abspath(cd)) == os.path.normcase(str(carpeta_cache(argparse.Namespace(cache="")))):
+        v["cache"] = ""
+    else:
+        pc = Path(cd).expanduser()
+        if pc.exists() and not pc.is_dir():
+            err.append(f"La carpeta de descargas «{cd}» es un archivo, no una carpeta.")
+        else:
+            base = pc
+            while not base.exists() and base.parent != base:
+                base = base.parent
+            if not os.access(base, os.W_OK):
+                err.append(f"No puedo escribir en «{base}». Elige otra carpeta de descargas.")
+        v["cache"] = str(pc)
+    c = str(t.get("salida", "")).strip().strip('"')
+    if not c or os.path.normcase(os.path.abspath(c)) == os.path.normcase(carpeta_resultados_defecto()):
+        v["salida"] = ""
+    else:
+        pc = Path(c).expanduser()
+        if pc.exists() and not pc.is_dir():
+            err.append(f"La carpeta de resultados «{c}» es un archivo, no una carpeta.")
+        else:
+            base = pc
+            while not base.exists() and base.parent != base:
+                base = base.parent
+            if not os.access(base, os.W_OK):
+                err.append(f"No puedo escribir en «{base}». Elige otra carpeta de resultados.")
+        v["salida"] = str(pc)
+    return v, err
+
+
+def ajustes_iniciales(args):
+    """Por defecto < guardados en el JSON < lo que se haya pasado en la línea de órdenes."""
+    d = dict(AJUSTES_POR_DEFECTO)
+    d.update(cargar_ajustes())
+    for k in CLAVES_AJUSTES:
+        if getattr(args, k, AJUSTES_POR_DEFECTO[k]) != AJUSTES_POR_DEFECTO[k]:
+            d[k] = getattr(args, k)
+    return d
+
+
+def aplicar_ajustes(args, v):
+    for k in CLAVES_AJUSTES:
+        if k in v:
+            setattr(args, k, v[k])
+    print("Ajustes: delante " + ",".join(map(str, args.delante)) + " | detrás " + ",".join(map(str, args.detras)) +
+          f" | trazo {args.tam_min}-{args.tam_max} px | percentil {args.percentil:g} | máx. candidatos "
+          f"{args.max_candidatos or 'sin límite'} | crujido {'no' if args.sin_crujido else 'sí'} | reducción "
+          f"{args.reduccion or 'automática'} | DPI {args.dpi} | resultados {args.salida or 'junto al programa'}"
+          f" | barrido: {'sin descargas' if args.sin_descargas else 'con descargas'}, hasta {args.limite_mb:g} MB, "
+          f"papiro >= {args.min_papiro:g} %, z > {args.z_umbral:g}, {'repetir' if args.rehacer else 'sin repetir'}, "
+          f"descargas en {args.cache or carpeta_cache(argparse.Namespace(cache=''))}", flush=True)
+
+
+# ====================================================================================
 #  VENTANA DE SELECCIÓN (tkinter)
 # ====================================================================================
-def elegir_con_ventana(encontrados, cache=""):
+def elegir_con_ventana(encontrados, cache="", ajustes=None):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
-    eleccion = {"rutas": [], "barrido": None, "recortes": False}
+    eleccion = {"rutas": [], "barrido": None, "recortes": False, "ajustes": None}
+    ajustes = dict(ajustes or AJUSTES_POR_DEFECTO)
     raiz = tk.Tk()
     raiz.title("MCSerDeLuz - Buscar tinta en el papiro (sin IA)")
-    raiz.geometry("900x530")
+    ALTO = 560
+    raiz.geometry(f"900x{ALTO}")
     tk.Label(raiz, text="Elige uno o varios segmentos y pulsa «Analizar».", font=("Segoe UI", 13, "bold")).pack(pady=(12, 2))
     tk.Label(raiz, text="He buscado en el Escritorio, Descargas y Documentos" + os.sep + "Papiro. "
                         "El zip no se descomprime: solo se leen las capas necesarias.",
              font=("Segoe UI", 10)).pack(pady=(0, 8))
+    abajo = tk.Frame(raiz); abajo.pack(side="bottom", fill="x")     # lo de abajo nunca se corta: encoge la lista
     marco = tk.Frame(raiz); marco.pack(fill="both", expand=True, padx=12)
-    lista = tk.Listbox(marco, selectmode="extended", font=("Consolas", 10))
+    lista = tk.Listbox(marco, selectmode="extended", font=("Consolas", 10), height=6, exportselection=False)
     barra = ttk.Scrollbar(marco, orient="vertical", command=lista.yview)
     lista.configure(yscrollcommand=barra.set)
     lista.pack(side="left", fill="both", expand=True); barra.pack(side="right", fill="y")
@@ -1902,47 +2528,188 @@ def elegir_con_ventana(encontrados, cache=""):
     def elegir_carpeta():
         anadir(filedialog.askdirectory(title="Elige la carpeta del segmento (la que contiene surface-volumes)"))
 
+    # ---------------------------------------------------------------- ajustes avanzados (plegable)
+    var_rec = tk.BooleanVar(value=False)
+    tk.Checkbutton(abajo, text="Exportar recortes de cada candidato (PNG con capa 15, mapa, escala y coordenadas)",
+                   variable=var_rec, font=("Segoe UI", 10)).pack(pady=(8, 0))
+    boton_av = tk.Button(abajo, text="Ajustes avanzados ▸", relief="flat", fg="#1f3f8a", font=("Segoe UI", 10, "bold"),
+                         cursor="hand2", name="boton_ajustes")
+    boton_av.pack(anchor="w", padx=12)
+    panel = tk.LabelFrame(abajo, text=" Ajustes avanzados (los mismos que las opciones de la línea de órdenes) ",
+                          font=("Segoe UI", 9), name="panel_ajustes", padx=8, pady=6)
+    BOOL = ("sin_crujido", "sin_descargas", "rehacer")
+    V = {k: tk.StringVar(name=f"aj_{k}") for k in CLAVES_AJUSTES if k not in BOOL}
+    VB = {k: tk.BooleanVar(name=f"aj_{k}") for k in BOOL}
+    V_cruj = VB["sin_crujido"]
+    nombres_red = [n for n, _ in REDUCCIONES]
+
+    def poner(d):
+        V["delante"].set(",".join(map(str, d["delante"]))); V["detras"].set(",".join(map(str, d["detras"])))
+        for k in ("tam_min", "tam_max", "max_candidatos", "dpi"):
+            V[k].set(str(d[k]))
+        V["percentil"].set(f"{float(d['percentil']):g}")
+        V["reduccion"].set({b: a for a, b in REDUCCIONES}.get(int(d["reduccion"] or 0), str(d["reduccion"])))
+        V["salida"].set(d["salida"] or carpeta_resultados_defecto())
+        for k in ("limite_mb", "min_papiro", "z_umbral"):
+            V[k].set(f"{float(d[k]):g}")
+        V["cache"].set(d["cache"] or str(carpeta_cache(argparse.Namespace(cache=""))))
+        for k in BOOL:
+            VB[k].set(bool(d[k]))
+
+    def fila(r, c, texto, w, pista=None):
+        tk.Label(panel, text=texto, font=("Segoe UI", 9)).grid(row=r, column=c, sticky="e", padx=(4, 2), pady=2)
+        w.grid(row=r, column=c + 1, sticky="w", pady=2)
+        if pista:
+            tk.Label(panel, text=pista, fg="#666666", font=("Segoe UI", 8)).grid(row=r + 1, column=c + 1, sticky="nw")
+
+    fila(0, 0, "Capas delante", tk.Entry(panel, textvariable=V["delante"], width=14, name="delante"))
+    fila(0, 2, "Capas detrás", tk.Entry(panel, textvariable=V["detras"], width=14, name="detras"))
+    fila(2, 0, "Tamaño mínimo del trazo (px)", tk.Spinbox(panel, from_=1, to=5000, textvariable=V["tam_min"], width=7, name="tam_min"))
+    fila(2, 2, "Tamaño máximo (px)", tk.Spinbox(panel, from_=1, to=5000, textvariable=V["tam_max"], width=7, name="tam_max"))
+    fila(4, 0, "Umbral, percentil", tk.Spinbox(panel, from_=50, to=99.99, increment=0.1, format="%.2f",
+                                                 textvariable=V["percentil"], width=7, name="percentil"),
+         "más alto = menos candidatos")
+    fila(4, 2, "Máximo de candidatos", tk.Spinbox(panel, from_=0, to=100000, textvariable=V["max_candidatos"], width=7,
+                                                  name="max_candidatos"), "0 = sin límite")
+    fila(6, 0, "Reducción de resolución", ttk.Combobox(panel, values=nombres_red, textvariable=V["reduccion"],
+                                                       state="readonly", width=11, name="reduccion"))
+    fila(6, 2, "Calidad de imagen, DPI", tk.Spinbox(panel, from_=50, to=600, increment=10, textvariable=V["dpi"],
+                                                    width=7, name="dpi"))
+    tk.Checkbutton(panel, text="Sin mapa de crujido (más rápido)", variable=V_cruj, name="sin_crujido",
+                   font=("Segoe UI", 9)).grid(row=8, column=1, columnspan=3, sticky="w", pady=2)
+    tk.Label(panel, text="Carpeta de resultados", font=("Segoe UI", 9)).grid(row=9, column=0, sticky="e", padx=(4, 2))
+    fc = tk.Frame(panel); fc.grid(row=9, column=1, columnspan=3, sticky="we", pady=2)
+    tk.Entry(fc, textvariable=V["salida"], width=58, name="salida").pack(side="left", fill="x", expand=True)
+
+    def elegir_salida():
+        c = filedialog.askdirectory(title="Carpeta de resultados", initialdir=V["salida"].get() or str(CARPETA_PROGRAMA))
+        if c:
+            V["salida"].set(c)
+    tk.Button(fc, text="Elegir...", command=elegir_salida, name="elegir_salida").pack(side="left", padx=4)
+    tk.Label(panel, text=f"Por defecto: {carpeta_resultados_defecto()}  (el barrido usa la subcarpeta "
+                         "MCSerDeLuz-barrido-PHerc1447)", fg="#666666", font=("Segoe UI", 8), wraplength=760,
+             justify="left").grid(row=10, column=1, columnspan=3, sticky="w")
+    tk.Label(panel, text="En el barrido: capas, tamaños, crujido, reducción, DPI, carpeta y máximo también cuentan; "
+                         "su umbral es z > 4 (el percentil es del análisis normal).", fg="#666666",
+             font=("Segoe UI", 8), wraplength=760, justify="left").grid(row=11, column=1, columnspan=3, sticky="w")
+    pb = tk.LabelFrame(panel, text=" Barrido ", font=("Segoe UI", 9), name="panel_barrido", padx=6, pady=4)
+    pb.grid(row=12, column=0, columnspan=4, sticky="we", pady=(6, 0))
+    tk.Checkbutton(pb, text="Sin descargas (usar solo lo que ya hay en el ordenador)", variable=VB["sin_descargas"],
+                   name="sin_descargas", font=("Segoe UI", 9)).grid(row=0, column=0, columnspan=2, sticky="w")
+    tk.Checkbutton(pb, text="Repetir segmentos ya analizados", variable=VB["rehacer"], name="rehacer",
+                   font=("Segoe UI", 9)).grid(row=0, column=2, columnspan=2, sticky="w")
+    sitios = [(1, 0), (1, 2), (2, 0)]
+    for (k, texto, lo, hi, inc), (r, c) in zip([("limite_mb", "Tamaño máximo de segmento (MB)", 1, 100000, 10),
+                                                ("min_papiro", "Mínimo de papiro (%)", 0, 100, 1),
+                                                ("z_umbral", "Umbral z del barrido", 0.5, 50, 0.5)], sitios):
+        tk.Label(pb, text=texto, font=("Segoe UI", 9)).grid(row=r, column=c, sticky="e", padx=(4, 2), pady=1)
+        tk.Spinbox(pb, from_=lo, to=hi, increment=inc, textvariable=V[k], width=8, name=k).grid(row=r, column=c + 1,
+                                                                                               sticky="w", pady=1)
+    tk.Label(pb, text="Carpeta de descargas", font=("Segoe UI", 9)).grid(row=3, column=0, sticky="e", padx=(4, 2))
+    fd = tk.Frame(pb); fd.grid(row=3, column=1, columnspan=3, sticky="we", pady=1)
+    tk.Entry(fd, textvariable=V["cache"], width=58, name="cache").pack(side="left", fill="x", expand=True)
+
+    def elegir_cache():
+        c = filedialog.askdirectory(title="Carpeta de descargas del barrido", initialdir=V["cache"].get() or str(CARPETA_PROGRAMA))
+        if c:
+            V["cache"].set(c)
+    tk.Button(fd, text="Elegir...", command=elegir_cache, name="elegir_cache").pack(side="left", padx=4)
+    tk.Button(panel, text="Restablecer valores", command=lambda: poner(AJUSTES_POR_DEFECTO),
+              name="restablecer").grid(row=13, column=1, sticky="w", pady=(6, 0))
+    tk.Label(panel, text=f"Se guardan en {archivo_ajustes()}", fg="#666666", font=("Segoe UI", 8)).grid(
+        row=13, column=2, columnspan=2, sticky="w", pady=(6, 0))
+    poner(ajustes)
+    abierto = {"v": False}
+
+    def plegar(mostrar=None):
+        abierto["v"] = (not abierto["v"]) if mostrar is None else bool(mostrar)
+        if abierto["v"]:
+            panel.pack(after=boton_av, fill="x", padx=12, pady=(0, 4))
+            boton_av.configure(text="Ajustes avanzados ▾")
+        else:
+            panel.pack_forget()
+            boton_av.configure(text="Ajustes avanzados ▸")
+        raiz.update_idletasks()
+        extra = panel.winfo_reqheight() + 8 if abierto["v"] else 0
+        alto = min(ALTO + extra, raiz.winfo_screenheight() - 70)
+        raiz.geometry(f"{min(max(900, raiz.winfo_reqwidth()), raiz.winfo_screenwidth() - 20)}x{alto}")
+    boton_av.configure(command=plegar)
+    raiz._plegar = plegar
+
+    def leer():
+        textos = {k: V[k].get() for k in V}
+        textos.update({k: VB[k].get() for k in BOOL})
+        v, err = validar_ajustes(textos)
+        if err:
+            plegar(True)
+            messagebox.showerror("Revisa los ajustes avanzados", "\n\n".join(err))
+            return None
+        guardar_ajustes(v)
+        return v
+
     def analizar_sel():
         sel = [rutas[i] for i in lista.curselection() if i < len(rutas)]
         if not sel:
             messagebox.showinfo("Nada elegido", "Selecciona al menos un segmento de la lista.")
             return
+        v = leer()
+        if v is None:
+            return
         eleccion["rutas"] = sel
         eleccion["recortes"] = bool(var_rec.get())
+        eleccion["ajustes"] = v
         raiz.destroy()
 
     def barrido_sel():
+        v = leer()
+        if v is None:
+            return
+        if v["sin_descargas"]:          # marcado en los ajustes: no pregunto, solo lo que ya hay en el ordenador
+            eleccion["barrido"] = "local"; eleccion["recortes"] = bool(var_rec.get()); eleccion["ajustes"] = v
+            raiz.destroy()
+            return
         r = messagebox.askyesnocancel(
             "Barrido PHerc 1447 (segmentos pequeños)",
-            "El barrido recorre los segmentos oficiales de PHerc 1447 de 180 MB o menos (capas 10-21).\n\n"
+            f"El barrido recorre los segmentos oficiales de PHerc 1447 de {v['limite_mb']:g} MB o menos (capas 10-21).\n\n"
             "Los que ya tienes en el ordenador se leen directamente. Los demás se DESCARGAN del bucket\n"
             "público del Vesuvius Challenge: unos 100 MB por segmento (en total cerca de 1 GB), a\n"
-            f"{cache or carpeta_cache(argparse.Namespace(cache=''))}\n"
+            f"{v['cache'] or cache or carpeta_cache(argparse.Namespace(cache=''))}\n"
             "Si se corta, al repetir continúa donde iba.\n\n"
             "¿Descargar los que falten?\n   Sí = descargar   No = solo los que ya tengo   Cancelar = volver")
         if r is None:
             return
         eleccion["barrido"] = "descargar" if r else "local"
         eleccion["recortes"] = bool(var_rec.get())
+        eleccion["ajustes"] = v
         raiz.destroy()
 
     lista.bind("<Double-Button-1>", lambda e: analizar_sel())
     raiz.bind("<Return>", lambda e: analizar_sel())
-    var_rec = tk.BooleanVar(value=False)
-    tk.Checkbutton(raiz, text="Exportar recortes de cada candidato (PNG con capa 15, mapa, escala y coordenadas)",
-                   variable=var_rec, font=("Segoe UI", 10)).pack(pady=(8, 0))
-    botones = tk.Frame(raiz); botones.pack(pady=10)
+    botones = tk.Frame(abajo); botones.pack(pady=10)
     tk.Button(botones, text="Analizar", width=16, font=("Segoe UI", 11, "bold"), bg="#d7f0d7",
-              command=analizar_sel).pack(side="left", padx=6)
+              command=analizar_sel, name="analizar").pack(side="left", padx=6)
     tk.Button(botones, text="Elegir otro zip...", width=18, command=elegir_zip).pack(side="left", padx=6)
     tk.Button(botones, text="Elegir carpeta...", width=18, command=elegir_carpeta).pack(side="left", padx=6)
     tk.Button(botones, text="Barrido PHerc 1447 (pequeños)...", width=28, bg="#dde8ff",
-              command=barrido_sel).pack(side="left", padx=6)
+              command=barrido_sel, name="barrido").pack(side="left", padx=6)
     tk.Button(botones, text="Salir", width=10, command=raiz.destroy).pack(side="left", padx=6)
-    tk.Label(raiz, text="Aviso: la tinta de carbono casi no cambia la densidad; el resultado son pistas débiles, no pruebas.",
-             fg="#8a4b00", font=("Segoe UI", 9)).pack(pady=(0, 8))
-    tk.Label(raiz, text="Barrido: descarga unos 100 MB por segmento que no tengas (cerca de 1 GB en total).",
+    tk.Label(abajo, text="Aviso: la tinta de carbono casi no cambia la densidad; el resultado son pistas débiles, no pruebas.",
+             fg="#8a4b00", font=("Segoe UI", 9)).pack(pady=(0, 4))
+    tk.Label(abajo, text="Barrido: descarga unos 100 MB por segmento que no tengas (cerca de 1 GB en total).",
              fg="#1f3f8a", font=("Segoe UI", 9)).pack(pady=(0, 8))
+    if os.environ.get("MCS_PRUEBA_VENTANA"):          # solo para la prueba automática: dice dónde está cada control
+        def posiciones():
+            raiz.update_idletasks()
+            pos = {}
+            for w in [boton_av, botones.nametowidget("analizar"), botones.nametowidget("barrido")] + (list(panel.winfo_children()) + list(fc.winfo_children())
+                                                                     + list(pb.winfo_children()) + list(fd.winfo_children())
+                                                                     if abierto["v"] else []):
+                if w.winfo_ismapped():
+                    pos[w.winfo_name()] = (w.winfo_rootx() + w.winfo_width() // 2, w.winfo_rooty() + w.winfo_height() // 2)
+            print("PRUEBA panel", "abierto" if abierto["v"] else "cerrado", "alto", raiz.winfo_height(),
+                  json.dumps({k: v for k, v in pos.items() if not k.startswith("!")}), flush=True)
+        raiz.after(400, posiciones)
+        boton_av.configure(command=lambda: (plegar(), raiz.after(300, posiciones)))
     raiz.mainloop()
     return eleccion
 
@@ -1988,7 +2755,9 @@ def main():
     ap.add_argument("--tam-min", type=int, default=TAM_TRAZO_MIN, help="tamaño mínimo de trazo en px (30)")
     ap.add_argument("--tam-max", type=int, default=TAM_TRAZO_MAX, help="tamaño máximo de trazo en px (80)")
     ap.add_argument("--percentil", type=float, default=PERCENTIL_UMBRAL, help="percentil del umbral (98.5)")
-    ap.add_argument("--max-candidatos", type=int, default=MAX_CANDIDATOS, help="candidatos en el informe (15)")
+    ap.add_argument("--comprobar-solapes", action="store_true",
+                    help="termina con error si algún texto de las figuras se pisa con otro (para pruebas)")
+    ap.add_argument("--max-candidatos", type=int, default=MAX_CANDIDATOS, help="máximo de candidatos que se muestran (0 = todos, por defecto)")
     ap.add_argument("--sin-crujido", action="store_true", help="no calcula el mapa de crujido")
     ap.add_argument("--reduccion", type=int, default=0, help="reducir resolución 1, 2, 4... (0 = automático)")
     ap.add_argument("--salida", default="", help="carpeta de resultados (por defecto, junto al programa)")
@@ -2032,9 +2801,11 @@ def main():
                 print("  -", p)
         else:
             try:
-                el = elegir_con_ventana(encontrados, str(carpeta_cache(args)))
+                el = elegir_con_ventana(encontrados, str(carpeta_cache(args)), ajustes_iniciales(args))
                 rutas, modo_barrido = el["rutas"], el["barrido"]
                 args.exportar_recortes = args.exportar_recortes or el["recortes"]
+                if el.get("ajustes"):
+                    aplicar_ajustes(args, el["ajustes"])
             except Exception as e:
                 print("No puedo abrir la ventana de selección (" + str(e) + "); sigo en la consola.")
                 rutas = elegir_en_consola(encontrados)
@@ -2073,7 +2844,7 @@ def main():
             if fig is not None:
                 plt.show()
                 plt.close("all")
-        return 0
+        return _fin_solapes(args, 0)
 
     resultados, errores = [], []
     PROG.iniciar("Analizando " + (f"{len(rutas)} segmentos" if len(rutas) > 1 else id_segmento(rutas[0])),
@@ -2110,15 +2881,37 @@ def main():
             msg += f"\n\nInforme y mapas guardados en:\n{carpeta}\n\nAhora se abren los mapas; ciérralos para terminar.\n" \
                    "Recuerda: son pistas débiles, no pruebas."
             raiz = tk.Tk(); raiz.withdraw()
-            abrir = messagebox.askyesno("MCSerDeLuz - análisis terminado", msg + "\n\n¿Abro la carpeta de resultados?")
+            if os.environ.get("MCS_PRUEBA_VENTANA"):     # prueba automática: sin la pregunta final
+                abrir = False
+            else:
+                abrir = messagebox.askyesno("MCSerDeLuz - análisis terminado", msg + "\n\n¿Abro la carpeta de resultados?")
             raiz.destroy()
             if abrir:
                 abrir_carpeta(carpeta)
         except Exception:
             pass
-        plt.show()
-        plt.close("all")
-    return 1 if errores and not resultados else 0
+        ventanas = []
+        for res in resultados:
+            try:
+                v = ventana_candidatos(res)
+                if v is not None:
+                    ventanas.append(v)
+            except Exception as e:
+                print(f"      (no pude abrir la ventana de candidatos: {e})")
+        esperar_ventanas(ventanas)
+    return _fin_solapes(args, 1 if errores and not resultados else 0)
+
+
+def _fin_solapes(args, codigo):
+    """Resumen de la comprobación automática de textos que se pisan."""
+    if not SOLAPES:
+        return codigo
+    malos = [x for x in SOLAPES if x[1]]
+    print(f"Comprobación de textos: {sum(x[1] for x in SOLAPES)} solapes en {len(SOLAPES)} figuras"
+          + (f" (con solapes: {', '.join(Path(x[0]).name for x in malos[:5])})" if malos else ""))
+    if malos and getattr(args, "comprobar_solapes", False):
+        return codigo or 3
+    return codigo
 
 
 def _pausa_exe():

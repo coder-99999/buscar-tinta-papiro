@@ -25,10 +25,17 @@ jobs:
           .\dist\MCSerDeLuz-buscar-tinta-papiro.exe --help
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python crear_prueba.py
-          .\dist\MCSerDeLuz-buscar-tinta-papiro.exe MCSerDeLuz-prueba-20990101000000.zip --sin-ventana --exportar-recortes --salida prueba-out
+          .\dist\MCSerDeLuz-buscar-tinta-papiro.exe MCSerDeLuz-prueba-20990101000000.zip --sin-ventana --exportar-recortes --comprobar-solapes --salida prueba-out
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Get-ChildItem prueba-out
           if (-not (Test-Path prueba-out\MCSerDeLuz-informe-tinta-20990101000000.txt)) { exit 1 }
+          python crear_prueba.py --muchos
+          .\dist\MCSerDeLuz-buscar-tinta-papiro.exe MCSerDeLuz-prueba-20990101000001.zip --sin-ventana --exportar-recortes --comprobar-solapes --salida prueba64
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $n = (Get-ChildItem prueba64\MCSerDeLuz-recortes-20990101000001\*.png).Count
+          $f = (Get-Content prueba64\MCSerDeLuz-candidatos-tinta-20990101000001.csv).Count - 1
+          Write-Host "sin tope: $n recortes, $f filas en el CSV"
+          if ($n -lt 50 -or $f -ne $n) { exit 1 }
           Get-FileHash dist\MCSerDeLuz-buscar-tinta-papiro.exe -Algorithm SHA256
       - uses: actions/upload-artifact@v4
         with:
@@ -57,9 +64,13 @@ jobs:
         run: |
           ./dist/MCSerDeLuz-buscar-tinta-papiro-linux --help
           python crear_prueba.py
-          ./dist/MCSerDeLuz-buscar-tinta-papiro-linux MCSerDeLuz-prueba-20990101000000.zip --sin-ventana --exportar-recortes --salida prueba-out
+          ./dist/MCSerDeLuz-buscar-tinta-papiro-linux MCSerDeLuz-prueba-20990101000000.zip --sin-ventana --exportar-recortes --comprobar-solapes --salida prueba-out
           ls -R prueba-out
           test -f prueba-out/MCSerDeLuz-informe-tinta-20990101000000.txt
+          python crear_prueba.py --muchos
+          ./dist/MCSerDeLuz-buscar-tinta-papiro-linux MCSerDeLuz-prueba-20990101000001.zip --sin-ventana --exportar-recortes --comprobar-solapes --salida prueba64
+          n=$(ls prueba64/MCSerDeLuz-recortes-20990101000001/*.png | wc -l); f=$(( $(wc -l < prueba64/MCSerDeLuz-candidatos-tinta-20990101000001.csv) - 1 ))
+          echo "sin tope: $n recortes, $f filas en el CSV"; test $n -ge 50 && test $f -eq $n
           sha256sum dist/MCSerDeLuz-buscar-tinta-papiro-linux
       - uses: actions/upload-artifact@v4
         with:
