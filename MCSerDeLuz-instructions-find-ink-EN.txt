@@ -8,7 +8,18 @@ Files:
   buscar_tinta_papiro.py                    the program (Python, Windows and Linux)
   buscar_tinta_papiro.bat                   Windows launcher (double-click)
   buscar_tinta_papiro.sh                    Linux launcher
-  MCSerDeLuz-buscar-tinta-papiro.exe        Windows one-file version, nothing to install (if present)
+  MCSerDeLuz-buscar-tinta-papiro.exe        Windows one-file version, nothing to install (if present;
+                                            it may be named MCSerDeLuz-buscar-tinta-papiro-v2.2b.exe)
+
+WHAT'S NEW IN VERSION 2.2b (2026-11-01)
+---------------------------------------
+  - No more freeze at 88 % (step 6) on large segments.
+  - The progress window keeps responding while the maps are computed (step 4).
+  - The result windows open in 2-3 s (before: ~15 s "Not responding") and no longer redraw
+    continuously while open.
+  - Images, thumbnails and crops show the 60 best candidates (change it in «Ajustes avanzados»;
+    0 = all). The report and the CSV always list ALL candidates.
+  - Results (numbers, report, CSV) are the same as in 2.2.
 
 
 WINDOWS, EASY WAY: THE .EXE (if you have MCSerDeLuz-buscar-tinta-papiro.exe)
@@ -50,7 +61,8 @@ it resumes if interrupted), checkbox «Exportar recortes...» (one cropped PNG p
 «Ajustes avanzados ▸» (collapsed by default) holds the same settings as the command-line options,
 including a «Barrido» section; values are validated and saved automatically on every
 change and on close (also with the X) to %APPDATA%\MCSerDeLuz\buscar-tinta-ajustes.json; «Restablecer valores» resets them.
-All candidates are shown (no cap), with a scrollable thumbnail window after each analysis.
+Images, thumbnails and crops show the 60 best candidates by default («Máximo de candidatos»; 0 = all);
+the report and the CSV always list ALL candidates. A scrollable thumbnail window opens after each analysis.
 A progress bar with the estimated time remaining and a «Cancelar» button is shown while it works.
 
 Command line (Windows: py buscar_tinta_papiro.py ... / Linux: ./buscar_tinta_papiro.sh ...):

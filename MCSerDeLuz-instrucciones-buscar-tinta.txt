@@ -8,6 +8,17 @@ Archivos en el Escritorio:
   MCSerDeLuz-manual-buscar-tinta.html       manual completo en inglés (ábrelo con el navegador)
   MCSerDeLuz-instrucciones-buscar-tinta.txt este archivo
   MCSerDeLuz-buscar-tinta-papiro.exe        versión para Windows que no necesita nada instalado (LA MÁS FÁCIL)
+                                            (puede llamarse MCSerDeLuz-buscar-tinta-papiro-v2.2b.exe)
+
+NOVEDADES DE LA VERSIÓN 2.2b (2026-11-01)
+-----------------------------------------
+  - Ya no se queda colgado al 88 % (paso 6) con segmentos grandes.
+  - La ventana de progreso sigue respondiendo mientras calcula los mapas (paso 4).
+  - Las ventanas de resultados se abren en 2-3 s (antes ~15 s «No responde») y ya no se
+    redibujan sin parar mientras están abiertas.
+  - Imágenes, miniaturas y recortes muestran los 60 mejores candidatos (se puede cambiar en
+    «Ajustes avanzados»; 0 = todos). El informe y el CSV llevan siempre TODOS.
+  - Los resultados (números, informe, CSV) son los mismos que en la 2.2.
 
 
 OPCIÓN FÁCIL (RECOMENDADA): EL .EXE
@@ -85,11 +96,12 @@ Al abrirlo busca los segmentos (zip o carpeta) en el Escritorio, Descargas y Doc
   - Casilla «Exportar recortes de cada candidato»: guarda además una imagen por candidato (capa 15
     a la izquierda, mapa de anomalía a la derecha, barra de escala de 1 mm y coordenadas fila/col).
   - «Ajustes avanzados ▸» (cerrado al principio): capas delante/detrás, tamaño del trazo, percentil
-    del umbral, máximo de candidatos (0 = sin límite), sin crujido, reducción, carpeta de resultados,
+    del umbral, máximo de candidatos en imágenes y recortes (60; 0 = todos), sin crujido, reducción, carpeta de resultados,
     DPI y una parte «Barrido» (sin descargas, MB máximo, % mínimo de papiro, umbral z, repetir y
     carpeta de descargas). «Restablecer valores» vuelve a los de siempre. Se guardan solos al
     cambiarlos y al cerrar (también con la X) en %APPDATA%\MCSerDeLuz\buscar-tinta-ajustes.json.
-  - Al terminar se abre una ventana con TODOS los candidatos en miniatura y barra de desplazamiento.
+  - Al terminar se abre una ventana con los mejores candidatos (60 por defecto) en miniatura y barra
+    de desplazamiento. El informe y el CSV llevan siempre TODOS.
   - Mientras trabaja sale una barra de progreso con el tiempo que queda aproximado y un botón
     «Cancelar». Sin ventana (--sin-ventana) la barra aparece como texto en la consola.
 
@@ -108,9 +120,9 @@ RESULTADOS
 Análisis normal: carpeta «MCSerDeLuz-resultados-tinta» junto al programa:
   MCSerDeLuz-informe-tinta-<segmento>.txt     informe en español (candidatos, controles, qué es cada uno)
   MCSerDeLuz-mapa-tinta-<segmento>.png        los mapas con los candidatos marcados
-  MCSerDeLuz-candidatos-tinta-<segmento>.png  TODOS los candidatos (sin límite)
+  MCSerDeLuz-candidatos-tinta-<segmento>.png  los mejores candidatos (60 por defecto; 0 = todos)
   MCSerDeLuz-candidatos-tinta-<segmento>.csv  tabla para Excel (todos los candidatos)
-  En pantalla se abre además una ventana con TODAS las miniaturas y barra de desplazamiento (rueda del ratón).
+  En pantalla se abre además una ventana con las miniaturas (las mismas 60) y barra de desplazamiento (rueda del ratón).
   MCSerDeLuz-recortes-<segmento>\MCSerDeLuz-recorte-<segmento>-NN.png   (con --exportar-recortes)
 Barrido: carpeta «MCSerDeLuz-barrido-PHerc1447» junto al programa:
   MCSerDeLuz-barrido-PHerc1447-resumen.txt / .csv   tabla: segmento, MB, % de papiro, candidatos y qué son

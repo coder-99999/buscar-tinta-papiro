@@ -16,7 +16,7 @@ CAMBIOS = {"percentil": "99", "tam_min": "20", "dpi": "150", "limite_mb": "120",
            "delante": "13,14,15", "max_candidatos": "abc", "sin_descargas": True, "rehacer": True, "sin_crujido": True}
 SALIDA = str(Path(tempfile.gettempdir()) / "mcs-prueba-resultados")
 CAMBIOS["salida"] = SALIDA
-# "abc" no vale: tiene que volver tal cual escrito, y en el JSON tiene que quedar el último valor bueno (0)
+# "abc" no vale: tiene que volver tal cual escrito, y en el JSON tiene que quedar el último valor bueno (60, el valor por defecto)
 ESPERADO = dict(CAMBIOS)
 
 
@@ -127,7 +127,7 @@ def main():
     print(f"   JSON {arch}: percentil {d.get('percentil')}, tam_min {d.get('tam_min')}, dpi {d.get('dpi')}, "
           f"limite_mb {d.get('limite_mb')}, salida {d.get('salida')}, sin_descargas {d.get('sin_descargas')}, max_candidatos {d.get('max_candidatos')}")
     if not (d.get("percentil") == 99 and d.get("tam_min") == 20 and d.get("dpi") == 150 and d.get("limite_mb") == 120
-            and d.get("sin_descargas") is True and d.get("delante") == [13, 14, 15] and d.get("max_candidatos") == 0
+            and d.get("sin_descargas") is True and d.get("delante") == [13, 14, 15] and d.get("max_candidatos") == 60
             and os.path.normcase(d.get("salida", "")) == os.path.normcase(SALIDA)):
         malos.append("valores válidos en el JSON")
     if WIN and "APPDATA" in os.environ and not str(arch).lower().startswith(os.environ["APPDATA"].lower()):
@@ -149,7 +149,7 @@ def main():
     time.sleep(0.5); cerrar_con_x(); p.wait(30)
     t = vals["textos"]
     ok = (t["percentil"] == "98.5" and t["tam_min"] == "30" and t["dpi"] == "110" and t["limite_mb"] == "180"
-          and t["max_candidatos"] == "0" and t["sin_descargas"] is False and t["delante"] == "14,15,16")
+          and t["max_candidatos"] == "60" and t["sin_descargas"] is False and t["delante"] == "14,15,16")
     print(f"   tras Restablecer + Salir: percentil {t['percentil']}, tam_min {t['tam_min']}, dpi {t['dpi']}, "
           f"limite_mb {t['limite_mb']}, sin_descargas {t['sin_descargas']}  {'OK' if ok else 'MAL'}")
     if not ok:

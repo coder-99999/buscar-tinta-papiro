@@ -34,8 +34,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           $n = (Get-ChildItem prueba64\MCSerDeLuz-recortes-20990101000001\*.png).Count
           $f = (Get-Content prueba64\MCSerDeLuz-candidatos-tinta-20990101000001.csv).Count - 1
-          Write-Host "sin tope: $n recortes, $f filas en el CSV"
-          if ($n -lt 50 -or $f -ne $n) { exit 1 }
+          Write-Host "tope 60: $n recortes, $f filas en el CSV (el CSV lleva todos)"
+          if ($f -lt 61 -or $n -ne [Math]::Min(60, $f)) { exit 1 }
       - name: Prueba de ajustes (se guardan al cerrar con la X y vuelven al abrir)
         shell: pwsh
         timeout-minutes: 10
@@ -81,7 +81,7 @@ jobs:
           python crear_prueba.py --muchos
           ./dist/MCSerDeLuz-buscar-tinta-papiro-linux MCSerDeLuz-prueba-20990101000001.zip --sin-ventana --exportar-recortes --comprobar-solapes --salida prueba64
           n=$(ls prueba64/MCSerDeLuz-recortes-20990101000001/*.png | wc -l); f=$(( $(wc -l < prueba64/MCSerDeLuz-candidatos-tinta-20990101000001.csv) - 1 ))
-          echo "sin tope: $n recortes, $f filas en el CSV"; test $n -ge 50 && test $f -eq $n
+          echo "tope 60: $n recortes, $f filas en el CSV (el CSV lleva todos)"; test $f -ge 61 && test $n -eq 60
           sha256sum dist/MCSerDeLuz-buscar-tinta-papiro-linux
       - name: Prueba de ajustes (Xvfb, escribiendo de verdad y cerrando con la X)
         timeout-minutes: 10

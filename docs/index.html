@@ -20,7 +20,9 @@
 </head>
 <body>
 <h1>Buscar tinta en el papiro – user manual</h1>
-<p><strong>MCSerDeLuz · version 2.0 (2026-10-31)</strong>. A classical tool that needs no AI. It looks for weak signs of ink in surface-volume segments of the Herculaneum papyrus <strong>PHerc. 1447</strong> from the Vesuvius Challenge. It runs on Windows and Linux. The program's windows and reports are in Spanish; this manual is in English.</p>
+<p><strong>MCSerDeLuz · version 2.2b (2026-11-01)</strong>. A classical tool that needs no AI. It looks for weak signs of ink in surface-volume segments of the Herculaneum papyrus <strong>PHerc. 1447</strong> from the Vesuvius Challenge. It runs on Windows and Linux. The program's windows and reports are in Spanish; this manual is in English.</p>
+
+<p><strong>New in 2.2b:</strong> large segments no longer freeze at 88 % (step 6); the progress window keeps responding during the map computation (step 4); the result windows open in about 2–3 s instead of freezing for ~15 s, and they no longer redraw continuously while open. Images, thumbnails and crops show the 60 best candidates by default (configurable; 0 = all); the report and the CSV always list <em>all</em> candidates. Results are identical to 2.2.</p>
 
 <div class="warn"><strong>Read this first.</strong> Herculaneum ink is carbon-based. In X-ray CT its density is almost the same as carbonised papyrus. Everything this tool reports is a <em>weak hint</em> to look at more closely. It is never proof of writing.</div>
 
@@ -56,8 +58,8 @@ chmod +x buscar_tinta_papiro.sh
 <tr><td>Elegir otro zip… / Elegir carpeta…</td><td>Picks a segment from somewhere else.</td></tr>
 <tr><td>Barrido PHerc 1447 (pequeños)…</td><td>Sweeps every official PHerc 1447 segment of ≤180 MB. Segments you already have are used directly. Missing ones are <strong>downloaded</strong> from the public open-data bucket at about 100 MB each (about 1 GB in total) and cached. If the sweep is interrupted, it resumes where it stopped. The tool asks before downloading.</td></tr>
 <tr><td>Exportar recortes de cada candidato</td><td>Also saves one cropped PNG per candidate. It shows layer 15 on the left and the anomaly map on the right, with a 1 mm scale bar and row/column axes.</td></tr>
-<tr><td>Ajustes avanzados ▸</td><td>Collapsed by default. Front/back layers, stroke size, threshold percentile, maximum candidates (0 = no limit, the default), no-crackle option, downsampling, results folder, DPI, and a <em>Barrido</em> section (no downloads, max segment MB, min papyrus %, z threshold, redo, download folder). Inputs are checked with clear Spanish messages and saved automatically on every change and when the window closes (including the X button), together with whether the panel was open, in <code>%APPDATA%\MCSerDeLuz\buscar-tinta-ajustes.json</code>; <em>Restablecer valores</em> resets them.</td></tr>
-<tr><td>Candidates window</td><td>After each analysis, a scrollable window shows a thumbnail of every candidate.</td></tr>
+<tr><td>Ajustes avanzados ▸</td><td>Collapsed by default. Front/back layers, stroke size, threshold percentile, maximum candidates shown in images, thumbnails and crops (60 by default; 0 = all; the report and CSV always list all), no-crackle option, downsampling, results folder, DPI, and a <em>Barrido</em> section (no downloads, max segment MB, min papyrus %, z threshold, redo, download folder). Inputs are checked with clear Spanish messages and saved automatically on every change and when the window closes (including the X button), together with whether the panel was open, in <code>%APPDATA%\MCSerDeLuz\buscar-tinta-ajustes.json</code>; <em>Restablecer valores</em> resets them.</td></tr>
+<tr><td>Candidates window</td><td>After each analysis, a scrollable window shows thumbnails of the best candidates (60 by default).</td></tr>
 <tr><td>Progress window</td><td>Shows a progress bar, the current step, the elapsed time, an estimate of the time remaining, and a <em>Cancelar</em> button.</td></tr>
 </table>
 <p>Command line (Windows: <code>py buscar_tinta_papiro.py</code> or the exe; Linux: <code>./buscar_tinta_papiro.sh</code>):</p>
@@ -131,6 +133,7 @@ chmod +x buscar_tinta_papiro.sh
 <li><em>py is not recognised</em>: install Python, then open a new PowerShell window.</li>
 <li><em>No module named tkinter</em> (Linux): run <code>sudo apt install python3-tk</code>, or use <code>--sin-ventana</code>.</li>
 <li>Out of memory: add <code>--reduccion 2</code>.</li>
+<li>Very slow or “Not responding” with thousands of candidates: keep <em>Máximo de candidatos</em> at 60 (the default). With 0 (= all) the candidates image can take minutes to draw; the report and CSV list all candidates anyway.</li>
 <li>Sweep interrupted: run it again and it resumes. Add <code>--rehacer</code> to recompute everything.</li>
 </ul>
 

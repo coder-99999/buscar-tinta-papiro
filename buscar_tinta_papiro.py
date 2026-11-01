@@ -66,7 +66,7 @@ CRÉDITOS Y LICENCIAS
     vecinas sin IA), reimplementada desde cero.
   * Datos: Vesuvius Challenge, datos abiertos (https://scrollprize.org/data).
 """
-VERSION = "2.0 (2026-10-31)"
+VERSION = "2.2b (2026-11-01)"
 
 import sys, os
 
@@ -162,7 +162,10 @@ MARGEN_BORDE = 30                   # se descartan manchas a menos de esto del b
 PESOS = {"densidad": 0.35, "textura": 0.25, "capas": 0.25, "crujido": 0.15}
 PERCENTIL_UMBRAL = 98.5             # qué parte alta de la puntuación se considera mancha
 MAX_PIXELES = 30_000_000            # por encima, se reduce la resolución para no agotar la memoria
-MAX_CANDIDATOS = 0      # 0 = todos los candidatos (en informe, mapas, recortes y ventana)
+MAX_CANDIDATOS = 60     # los N mejores en mapas, imagen de candidatos, miniaturas y recortes (0 = todos);
+                        # el informe y el CSV llevan SIEMPRE todos los candidatos
+MAX_ETIQUETAS_HUECOS = 150   # con más números en un panel, se ponen en su sitio sin buscar huecos (rápido)
+AJUSTES_VERSION = 2     # 2: «máximo de candidatos» pasa de 0 (todos) a 60 por defecto
 
 
 def tope(lista, n):
@@ -192,6 +195,9 @@ class Progreso:
         self.ultimo = (-1.0, 0.0)
         self.raiz = None
         self.cancelado = False
+        self._t_update = 0.0
+        self.extra = None       # ventana de resultados que hay que atender mientras se recolocan sus textos
+        self._t_extra = 0.0
         self.tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
 
     def iniciar(self, titulo="", ventana=False):
@@ -242,7 +248,35 @@ class Progreso:
             return f"transcurrido {_hms(t)}, calculando el tiempo restante..."
         return f"transcurrido {_hms(t)}, quedan unos {_hms(t / self.g * (1 - self.g))}"
 
-    def poner(self, x, texto=None):
+    def latido(self, en_dibujo=False):
+        """Atiende la ventana de progreso (sin mover la barra ni escribir nada en la consola) si hace más
+        de 0,2 s de la última vez. Se llama dentro de los bucles largos para que Windows no la marque
+        como «No responde». Sin ventana de progreso, atiende las ventanas de resultados mientras se
+        recolocan sus textos (nunca a mitad de un dibujo)."""
+        if self.raiz is None:
+            if self.extra is not None and not en_dibujo:
+                ahora = time.time()
+                if ahora - self._t_extra >= 0.2:
+                    try:
+                        self.extra.update()
+                    except Exception:
+                        self.extra = None
+                    self._t_extra = time.time()
+            return
+        ahora = time.time()
+        if ahora - self._t_update < 0.2:
+            return
+        if self.cancelado:
+            self.cancelado = False
+            raise KeyboardInterrupt
+        try:
+            self.eta["text"] = f"{self.g * 100:.0f} %  -  {self.texto_eta()}"
+            self.raiz.update()
+        except Exception:
+            self.raiz = None
+        self._t_update = time.time()
+
+    def poner(self, x, texto=None, consola=True):
         if self.cancelado:
             self.cancelado = False
             raise KeyboardInterrupt
@@ -252,7 +286,7 @@ class Progreso:
         self.g = max(self.g, min(g, 1.0))
         ahora = time.time()
         gu, tu = self.ultimo
-        if self.g - gu >= 0.05 or ahora - tu >= 15 or self.g >= 0.999 and gu < 0.999:
+        if consola and (self.g - gu >= 0.05 or ahora - tu >= 15 or self.g >= 0.999 and gu < 0.999):
             self.ultimo = (self.g, ahora)
             n = int(round(30 * self.g))
             print(f"  [{'#' * n}{'-' * (30 - n)}] {self.g * 100:5.1f} %  {self.texto_eta()}", flush=True)
@@ -265,6 +299,7 @@ class Progreso:
                 self.raiz.update()
             except Exception:
                 self.raiz = None
+            self._t_update = time.time()
 
 
 PROG = Progreso()
@@ -310,6 +345,23 @@ def _suma_caja_1d(a, r, eje):
     return np.moveaxis(s, 0, eje)
 
 
+def _filtro_caja_por_tiras(a, k, tira=256):
+    """Lo mismo que ndi.uniform_filter(a, size=k, mode="constant") para una imagen 2D float32 (que también
+    filtra primero por columnas y luego por filas, guardando el paso intermedio en float32), pero hecho
+    por tiras para poder atender la ventana entre una y otra: el resultado es idéntico bit a bit."""
+    if a.ndim != 2:
+        return ndi.uniform_filter(a, size=k, mode="constant")
+    tmp = np.empty_like(a)
+    for j in range(0, a.shape[1], tira):
+        ndi.uniform_filter1d(a[:, j:j + tira], k, axis=0, output=tmp[:, j:j + tira], mode="constant")
+        PROG.latido()
+    out = np.empty_like(a)
+    for i in range(0, a.shape[0], tira):
+        ndi.uniform_filter1d(tmp[i:i + tira, :], k, axis=1, output=out[i:i + tira, :], mode="constant")
+        PROG.latido()
+    return out
+
+
 def suma_caja(a, r):
     """Suma en una ventana cuadrada de lado 2r+1 (truncada en los bordes)."""
     r = int(max(0, r))
@@ -317,7 +369,7 @@ def suma_caja(a, r):
         return a.astype(np.float32)
     if ndi is not None:
         k = 2 * r + 1
-        return (ndi.uniform_filter(a.astype(np.float32), size=k, mode="constant") * (k * k)).astype(np.float32)
+        return (_filtro_caja_por_tiras(a.astype(np.float32), k) * (k * k)).astype(np.float32)
     return _suma_caja_1d(_suma_caja_1d(a.astype(np.float32), r, 0), r, 1)
 
 
@@ -1085,27 +1137,38 @@ def analizar(ruta, args):
         "salida": salida, "args": args, "trozos": vol.trozos,
     }
     capa = ce * m
+    def avance(x):          # barra de la ventana durante el paso 6 (sin líneas nuevas en la consola)
+        PROG.poner(x, consola=False)
     png_mapa = salida / f"MCSerDeLuz-mapa-tinta-{seg}.png"
     png_cand = salida / f"MCSerDeLuz-candidatos-tinta-{seg}.png"
     txt = salida / f"MCSerDeLuz-informe-tinta-{seg}.txt"
     csvp = salida / f"MCSerDeLuz-candidatos-tinta-{seg}.csv"
+    recortes = getattr(args, "exportar_recortes", False) and candidatos
+    avance(0.01)
     fig = figura_mapas(res, capa, m, z_dens, z_text, z_capas, z_cruj, punt)
+    avance(0.05)
     guardar_figura(fig, png_mapa, args.dpi)
+    avance(0.25)
     fig2 = figura_candidatos(res, capa, punt, m)
+    avance(0.3)
     if fig2 is not None:
         guardar_figura(fig2, png_cand, args.dpi)
+        avance(0.5)
         if not args.sin_ventana:
-            res["miniaturas"] = miniaturas_candidatos(res, capa, punt, m)
+            res["miniaturas"] = miniaturas_candidatos(res, capa, punt, m, avance=lambda x: avance(0.5 + 0.2 * x))
             plt.close(fig2)          # en pantalla se ven en la ventana con barra de desplazamiento
     elif png_cand.exists():
         png_cand.unlink()
+    avance(0.7)
     res["t_total"] = time.time() - t0
-    escribir_informe(txt, res, png_mapa, png_cand if fig2 is not None else None, csvp)
-    escribir_csv(csvp, candidatos)
-    if getattr(args, "exportar_recortes", False) and candidatos:
+    escribir_informe(txt, res, png_mapa, png_cand if fig2 is not None else None, csvp)   # todos los candidatos
+    avance(0.72)
+    escribir_csv(csvp, candidatos)                                                       # todos los candidatos
+    avance(0.74 if recortes else 1.0)
+    if recortes:
         res["recortes"] = str(exportar_recortes(salida, seg, ce, punt, tope(candidatos, args.max_candidatos), f,
                                                 f"capa {centro}", "puntuación combinada", max(umbral * 1.6, 1.0),
-                                                mascara=m > 0)[0])
+                                                mascara=m > 0, avance=lambda x: avance(0.74 + 0.26 * x))[0])
     res.update({"png_mapa": png_mapa, "png_cand": png_cand if fig2 is not None else None, "txt": txt,
                 "csv": csvp, "fig": fig, "fig2": fig2})
     print(f"      informe:    {txt}")
@@ -1400,7 +1463,7 @@ def analizar_barrido_segmento(ruta, args, salida, seg_nombre, tam_mb, origen):
     comb = np.max(np.stack([np.clip(M, 0, None) for M in maps.values()]), 0)
     vista = dict(capa=L(ce), m0=m0, comb=np.where(core, comb, np.nan))
     png = salida / f"MCSerDeLuz-barrido-{seg}.png"
-    figura_barrido_segmento(dict(out, candidatos=tope(cands, args.max_candidatos)), vista, png, args.dpi)
+    figura_barrido_segmento(dict(out, candidatos=tope(cands, args.max_candidatos), n_total=len(cands)), vista, png, args.dpi)
     out["png"] = str(png)
     if getattr(args, "exportar_recortes", False) and cands:
         out["recortes"] = str(exportar_recortes(salida, seg, L(ce), comb, tope(cands, args.max_candidatos), f, f"capa {ce}",
@@ -1417,10 +1480,22 @@ SOLAPES = []          # (png, n_solapes, detalle) de cada figura guardada en est
 
 
 def _renderer(fig):
+    """Dibuja la figura para poder medir los textos. Las imágenes no cambian dónde caen los textos y son lo
+    que más tarda en dibujarse, así que aquí se dibuja sin ellas (el PNG y la ventana sí las llevan)."""
     if not hasattr(fig.canvas, "get_renderer"):
         from matplotlib.backends.backend_agg import FigureCanvasAgg
         FigureCanvasAgg(fig)
-    fig.canvas.draw()
+    PROG.latido()
+    ocultas = [im for ax in fig.axes for im in ax.images if im.get_visible()]
+    for im in ocultas:
+        im.set_visible(False)
+    try:
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+        FigureCanvasAgg.draw(fig.canvas)       # solo el dibujo en memoria, sin pasarlo a la pantalla
+    finally:
+        for im in ocultas:
+            im.set_visible(True)
+    PROG.latido()
     return fig.canvas.get_renderer()
 
 
@@ -1511,10 +1586,15 @@ def comprobar_solapes(fig, pad=0.5, pares=None):
     problemas = []
     for i in range(len(cajas)):
         ti, bi = cajas[i]
+        if i % 50 == 0:
+            PROG.latido()
         if bi.x0 < -1 or bi.y0 < -1 or bi.x1 > W + 1 or bi.y1 > H + 1:
             problemas.append(f"cortado por el borde: {ti.get_text()[:40]!r}")
+        directa_i = getattr(ti, "_mcs_directa", False)
         for j in range(i + 1, len(cajas)):
             tj, bj = cajas[j]
+            if directa_i and getattr(tj, "_mcs_directa", False):
+                continue        # números puestos sin buscar hueco (más de MAX_ETIQUETAS_HUECOS): pueden tocarse
             if _cruzan(bi, bj, -pad):
                 problemas.append(f"{ti.get_text()[:30]!r} pisa {tj.get_text()[:30]!r}")
                 if pares is not None:
@@ -1595,10 +1675,22 @@ def poner_titulo(fig, texto, fontsize):
 
 
 def reacomodar(fig, *_):
-    """Vuelve a distribuir títulos, marcas y etiquetas para el tamaño actual (se llama al cambiar la ventana)."""
+    """Vuelve a distribuir títulos, marcas y etiquetas para el tamaño actual (se llama al cambiar la ventana).
+    Mientras tanto se siguen atendiendo las ventanas (para que Windows no diga «No responde») pero sin
+    redibujar la figura a medias: el dibujo en pantalla se hace una sola vez, al final."""
     if getattr(fig, "_mcs_ocupado", False):
+        fig._mcs_pendiente = True          # otro cambio de tamaño mientras tanto: se repite al acabar
         return
     fig._mcs_ocupado = True
+    fig._mcs_pendiente = False
+    canvas = fig.canvas
+    pedido = []
+    canvas.draw_idle = lambda *a, **k: pedido.append(1)
+    previo = PROG.extra
+    try:
+        PROG.extra = canvas.get_tk_widget()
+    except Exception:
+        pass
     try:
         for a in fig.__dict__.get("_mcs_anotaciones", []):
             try:
@@ -1607,16 +1699,47 @@ def reacomodar(fig, *_):
                 pass
         fig._mcs_anotaciones = []
         fig._mcs_etiquetas = list(fig.__dict__.get("_mcs_items", []))
-        acabar_figura(fig, getattr(fig, "_mcs_rect", (0, 0, 1, 1)))
-        fig.canvas.draw_idle()
+        acabar_figura(fig, getattr(fig, "_mcs_rect", (0, 0, 1, 1)), comprobar=False)
     finally:
+        PROG.extra = previo
+        try:
+            del canvas.draw_idle
+        except Exception:
+            pass
         fig._mcs_ocupado = False
+    if fig.__dict__.pop("_mcs_pendiente", False):
+        _programar_reacomodo(fig)
+    else:
+        try:
+            canvas.draw_idle()
+        except Exception:
+            pass
+
+
+def _programar_reacomodo(fig, ms=300):
+    """Recoloca los textos cuando la ventana lleva un momento sin cambiar de tamaño (al abrirse llegan
+    varios cambios seguidos y antes se recolocaba todo una vez por cada uno)."""
+    t = fig.__dict__.get("_mcs_temporizador")
+    if t is None:
+        try:
+            t = fig.canvas.new_timer(interval=ms)
+            t.single_shot = True
+            t.add_callback(reacomodar, fig)
+            fig._mcs_temporizador = t
+        except Exception:
+            reacomodar(fig)
+            return
+    try:
+        t.stop()
+        t.start()
+    except Exception:
+        reacomodar(fig)
 
 
 def vigilar_ventana(fig):
     """En pantalla: cada vez que cambia el tamaño de la ventana se recolocan los textos."""
     try:
-        fig.canvas.mpl_connect("resize_event", lambda e: reacomodar(fig))
+        fig.canvas.mpl_connect("resize_event", lambda e: _programar_reacomodo(fig))
     except Exception:
         pass
 
@@ -1647,54 +1770,81 @@ def _colocar_etiquetas(fig):
     for ax, items in pend:
         caja_ax = ax.get_window_extent(r)
         px_por_dato = caja_ax.width / max(1e-9, abs(np.diff(ax.get_xlim())[0]))
+        if len(items) > MAX_ETIQUETAS_HUECOS:
+            # muchísimos números: buscar huecos crece con el cuadrado y puede tardar horas; van en su sitio
+            for k, (x, y, s, col, rad) in enumerate(items):
+                if k % 25 == 0:
+                    PROG.latido()
+                rr_pt = max(3.0, rad * px_por_dato) * 72 / fig.dpi
+                d = (rr_pt + 3) / math.sqrt(2)
+                a = ax.annotate(s, (x, y), xytext=(d, d), textcoords="offset points", color=col,
+                                fontsize=9, fontweight="bold", ha="center", va="center",
+                                bbox=dict(boxstyle="round,pad=0.12", fc="black", ec="none", alpha=0.55),
+                                annotation_clip=False, zorder=6)
+                a.set_in_layout(False)
+                a._mcs_directa = True
+                anot.append(a)
+            continue
         circulos = []
         for (x, y, s, col, rad) in items:
             cx, cy = ax.transData.transform((x, y))
             rr = max(3.0, rad * px_por_dato)
             circulos.append((cx - rr, cy - rr, cx + rr, cy + rr))
+        circ = np.array(circulos, dtype=float).reshape(-1, 4)
         for (x, y, s, col, rad) in items:
+            PROG.latido()
             rr_pt = max(3.0, rad * px_por_dato) * 72 / fig.dpi
+            # cajas ya ocupadas, en un array para contar los choques de golpe (mismo resultado que uno a uno)
+            ocu = np.array([(o.x0, o.y0, o.x1, o.y1) for o in ocupadas], dtype=float).reshape(-1, 4)
+            # una sola etiqueta de prueba que se va moviendo (antes se creaba y borraba una por cada intento)
+            sonda = ax.annotate(s, (x, y), xytext=(0.0, 0.0), textcoords="offset points", color=col,
+                                fontsize=9, fontweight="bold", ha="center", va="center",
+                                bbox=dict(boxstyle="round,pad=0.12", fc="black", ec="none", alpha=0.55),
+                                annotation_clip=False, zorder=6)
+            sonda.set_in_layout(False)
             mejor = None
-            for anillo in range(30):
-                d = rr_pt + 3 + anillo * 6
-                for ang in angulos:
-                    dx, dy = d * math.cos(math.radians(ang)), d * math.sin(math.radians(ang))
-                    a = ax.annotate(s, (x, y), xytext=(dx, dy), textcoords="offset points", color=col,
-                                    fontsize=9, fontweight="bold", ha="center", va="center",
-                                    bbox=dict(boxstyle="round,pad=0.12", fc="black", ec="none", alpha=0.55),
-                                    annotation_clip=False, zorder=6)
-                    a.set_in_layout(False)
-                    b = a.get_window_extent(r).padded(1.5)
-                    dentro = (b.x0 >= caja_ax.x0 and b.x1 <= caja_ax.x1 and b.y0 >= caja_ax.y0 and b.y1 <= caja_ax.y1)
-                    choques = sum(_cruzan(b, o) for o in ocupadas)
-                    tapa = sum(b.x0 < c[2] and c[0] < b.x1 and b.y0 < c[3] and c[1] < b.y1 for c in circulos)
-                    nota = choques * 100 + (0 if dentro else 50) + tapa
-                    if mejor is None or nota < mejor[0]:
-                        if mejor is not None:
-                            mejor[1].remove()
-                        mejor = (nota, a, b, anillo)
-                    else:
-                        a.remove()
-                    if nota == 0:
+            try:
+                for anillo in range(30):
+                    PROG.latido()
+                    d = rr_pt + 3 + anillo * 6
+                    for ang in angulos:
+                        dx, dy = d * math.cos(math.radians(ang)), d * math.sin(math.radians(ang))
+                        sonda.xyann = (dx, dy)
+                        b = sonda.get_window_extent(r).padded(1.5)
+                        dentro = (b.x0 >= caja_ax.x0 and b.x1 <= caja_ax.x1 and b.y0 >= caja_ax.y0 and b.y1 <= caja_ax.y1)
+                        choques = int(np.count_nonzero((b.x0 < ocu[:, 2]) & (ocu[:, 0] < b.x1)
+                                                       & (b.y0 < ocu[:, 3]) & (ocu[:, 1] < b.y1)))
+                        tapa = int(np.count_nonzero((b.x0 < circ[:, 2]) & (circ[:, 0] < b.x1)
+                                                    & (b.y0 < circ[:, 3]) & (circ[:, 1] < b.y1)))
+                        nota = choques * 100 + (0 if dentro else 50) + tapa
+                        if mejor is None or nota < mejor[0]:
+                            mejor = (nota, (dx, dy), b, anillo)
+                        if nota == 0:
+                            break
+                    if mejor[0] == 0:
                         break
-                if mejor[0] == 0:
-                    break
-            nota, a, b, anillo = mejor
+            finally:
+                sonda.remove()
+            nota, xy_texto, b, anillo = mejor
             if anillo > 0 or nota > 0:          # lejos del círculo: línea guía hasta él
-                a.arrow_patch = None
-                a.remove()
-                a = ax.annotate(s, (x, y), xytext=a.xyann, textcoords="offset points", color=col, fontsize=9,
+                a = ax.annotate(s, (x, y), xytext=xy_texto, textcoords="offset points", color=col, fontsize=9,
                                 fontweight="bold", ha="center", va="center",
                                 bbox=dict(boxstyle="round,pad=0.12", fc="black", ec="none", alpha=0.55),
                                 arrowprops=dict(arrowstyle="-", color=col, lw=0.8, shrinkA=0, shrinkB=rr_pt),
                                 annotation_clip=False, zorder=6)
-                a.set_in_layout(False)
+            else:
+                a = ax.annotate(s, (x, y), xytext=xy_texto, textcoords="offset points", color=col,
+                                fontsize=9, fontweight="bold", ha="center", va="center",
+                                bbox=dict(boxstyle="round,pad=0.12", fc="black", ec="none", alpha=0.55),
+                                annotation_clip=False, zorder=6)
+            a.set_in_layout(False)
             anot.append(a)
             ocupadas.append(b)
 
 
-def acabar_figura(fig, rect=(0, 0, 1, 1)):
-    """Distribuye los textos sin que se pisen y devuelve la lista de solapes que queden (debería estar vacía)."""
+def acabar_figura(fig, rect=(0, 0, 1, 1), comprobar=True):
+    """Distribuye los textos sin que se pisen y devuelve la lista de solapes que queden (debería estar vacía).
+    Con comprobar=False (al recolocar en pantalla) no se hace la comprobación final y devuelve []."""
     fig._mcs_rect = tuple(rect)
     rect = list(rect)
     st = getattr(fig, "_suptitle", None)
@@ -1740,11 +1890,31 @@ def acabar_figura(fig, rect=(0, 0, 1, 1)):
                     ax._set_title_offset_trans(ax._mcs_pad)
         wp += 1.2; hp += 0.6            # títulos o marcas de ejes vecinos que se tocan: más aire entre ejes
     _colocar_etiquetas(fig)
-    return comprobar_solapes(fig)
+    return comprobar_solapes(fig) if comprobar else []
+
+
+class _Latido(matplotlib.artist.Artist):
+    """Artista invisible: al dibujar cada eje atiende la ventana de progreso (una figura con muchos ejes
+    tarda varios segundos en dibujarse y guardarse de una sola vez)."""
+
+    def __init__(self):
+        super().__init__()
+        self.set_in_layout(False)
+
+    def draw(self, renderer):
+        PROG.latido(en_dibujo=True)
+
+
+def _poner_latidos(fig):
+    for ax in fig.axes:
+        if not ax.__dict__.get("_mcs_latido"):
+            ax.add_artist(_Latido())
+            ax._mcs_latido = True
 
 
 def guardar_figura(fig, png, dpi, rect=(0, 0, 1, 1), avisar=True):
     """acabar_figura + savefig (sin volver a recolocar nada) y apunta el resultado de la comprobación."""
+    _poner_latidos(fig)
     dpi0 = fig.get_dpi()
     fig.set_dpi(dpi)
     problemas = acabar_figura(fig, rect)
@@ -1773,7 +1943,9 @@ def figura_barrido_segmento(out, v, png, dpi):
         marcar_etiquetas(A, [(c["col"], c["fila"], str(c["n"]), TIPOS[c["tipo"]][1], 45) for c in out["candidatos"]])
         A.set_xticks([]); A.set_yticks([])
     ley = LEYENDA
-    poner_titulo(fig, f"PHerc 1447 {out['seg']} — {len(out['candidatos'])} candidatos (z>4, 25-160 px). Colores: {ley}. "
+    n_tot = out.get("n_total", len(out["candidatos"]))
+    marcados = f"{n_tot} candidatos" + (f", se marcan los {len(out['candidatos'])} mejores" if len(out["candidatos"]) < n_tot else "")
+    poner_titulo(fig, f"PHerc 1447 {out['seg']} — {marcados} (z>4, 25-160 px). Colores: {ley}. "
                           "Pistas débiles, no pruebas.", 10)
     guardar_figura(fig, png, dpi)
     plt.close(fig)
@@ -1962,7 +2134,7 @@ def figura_resumen_barrido(salida, filas, minis, dpi):
 # ====================================================================================
 #  RECORTES DE CADA CANDIDATO (--exportar-recortes)
 # ====================================================================================
-def exportar_recortes(base, seg, capa, mapa, cands, f, nombre_capa, nombre_mapa, vmax, dpi=120, mascara=None):
+def exportar_recortes(base, seg, capa, mapa, cands, f, nombre_capa, nombre_mapa, vmax, dpi=120, mascara=None, avance=None):
     """Guarda un PNG por candidato: capa de papiro y mapa de anomalía alrededor, con escala y coordenadas."""
     from matplotlib.figure import Figure
     from matplotlib.patches import Rectangle
@@ -1979,7 +2151,10 @@ def exportar_recortes(base, seg, capa, mapa, cands, f, nombre_capa, nombre_mapa,
         lo, hi = float(np.nanmin(capa)), float(np.nanmax(capa))
     mm_px = 1000.0 / TAM_PIXEL_UM                      # 1 mm en píxeles del segmento (~116)
     hechos = []
-    for c in cands:
+    for i_c, c in enumerate(cands):
+        if avance is not None:
+            avance(i_c / max(1, len(cands)))
+        PROG.latido()
         mitad = max(160, int(c["tam"] * 2.5))          # ventana en píxeles del segmento
         yc, xc = int(c["fila"] / f), int(c["col"] / f)
         r = max(4, int(mitad / f))
@@ -2105,19 +2280,26 @@ def figura_candidatos(res, capa, punt, m):
     for a in ejes.ravel():
         a.axis("off")
     for a, c in zip(ejes.ravel(), top):
+        PROG.latido()
         a.axis("on")
         _panel_candidato(a, c, capa, punt, f, lo, hi, res["umbral"])
-    poner_titulo(fig, f"Segmento {res['segmento']} - capa {res['centro']} alrededor de los {len(top)} candidatos "
+    n_tot = len(res["candidatos"])
+    cuales = f"los {len(top)} candidatos" if len(top) >= n_tot else f"los {len(top)} mejores de {n_tot} candidatos"
+    poner_titulo(fig, f"Segmento {res['segmento']} - capa {res['centro']} alrededor de {cuales} "
                           f"(rojo = zona sobre el umbral). Pistas débiles, no pruebas.", 12)
     return fig
 
 
-def miniaturas_candidatos(res, capa, punt, m, dpi=80):
-    """Una imagen PNG pequeña (en memoria) por candidato, para la ventana con barra de desplazamiento."""
+def miniaturas_candidatos(res, capa, punt, m, dpi=80, avance=None):
+    """Una imagen PNG pequeña (en memoria) por candidato (los N mejores), para la ventana con barra de desplazamiento."""
     from matplotlib.figure import Figure
     lo, hi = _estirar(capa, m)
     out = []
-    for c in tope(res["candidatos"], res["args"].max_candidatos):
+    lista = tope(res["candidatos"], res["args"].max_candidatos)
+    for i_c, c in enumerate(lista):
+        if avance is not None:
+            avance(i_c / max(1, len(lista)))
+        PROG.latido()
         fig = Figure(figsize=(3.7, 4.1))
         a = fig.subplots()
         _panel_candidato(a, c, capa, punt, res["f"], lo, hi, res["umbral"])
@@ -2151,7 +2333,7 @@ def esperar_ventanas(ventanas):
             break
         if figs:
             try:
-                plt.pause(0.04)
+                _atender_figuras(0.04)
             except Exception:
                 time.sleep(0.04)
         else:
@@ -2159,16 +2341,34 @@ def esperar_ventanas(ventanas):
     plt.close("all")
 
 
+def _atender_figuras(segundos):
+    """Como plt.pause(), pero sin volver a dibujar la figura cada vez: plt.pause() vuelve a «mostrar» las
+    ventanas y con TkAgg eso redibuja la figura entera (~1 s con los mapas) en cada vuelta del bucle."""
+    from matplotlib import _pylab_helpers
+    m = _pylab_helpers.Gcf.get_active()
+    if m is None:
+        time.sleep(segundos)
+        return
+    c = m.canvas
+    if c.figure.stale:
+        c.draw_idle()
+    c.start_event_loop(segundos)
+
+
 def ventana_candidatos(res):
-    """Ventana con TODAS las miniaturas de los candidatos y barra de desplazamiento. Devuelve la ventana."""
+    """Ventana con las miniaturas de los candidatos (los N mejores) y barra de desplazamiento. Devuelve la ventana."""
     import tkinter as tk, base64
     minis = res.get("miniaturas") or []
     if not minis:
         return None
     raiz = tk.Tk()
-    raiz.title(f"MCSerDeLuz - {len(minis)} candidatos - {res['segmento']}")
+    n_tot = len(res.get("candidatos") or []) or len(minis)
+    cuales = (f"{len(minis)} candidatos (todos)" if len(minis) >= n_tot else
+              f"los {len(minis)} mejores de {n_tot} candidatos (todos están en el informe y en el CSV)")
+    raiz.title(f"MCSerDeLuz - {len(minis)} de {n_tot} candidatos - {res['segmento']}" if len(minis) < n_tot
+               else f"MCSerDeLuz - {len(minis)} candidatos - {res['segmento']}")
     alto = min(900, raiz.winfo_screenheight() - 120)
-    tk.Label(raiz, text=f"Segmento {res['segmento']}: {len(minis)} candidatos (todos). Usa la rueda del ratón o la barra "
+    tk.Label(raiz, text=f"Segmento {res['segmento']}: {cuales}. Usa la rueda del ratón o la barra "
                         "para ver el resto. Pistas débiles, no pruebas.", wraplength=900).pack(fill="x", padx=6, pady=4)
     marco = tk.Frame(raiz); marco.pack(fill="both", expand=True)
     lienzo = tk.Canvas(marco, highlightthickness=0)
@@ -2254,9 +2454,9 @@ def escribir_informe(p, res, png_mapa, png_cand, csvp):
              f"({a.tam_min * px_mm:.2f}-{a.tam_max * px_mm:.2f} mm)")
     L.append(f"Tiempo:            {res.get('t_total', 0):.0f} s (lectura {res['t_lect']:.0f} s)")
     L.append("")
-    L.append("MEJORES CANDIDATOS (fila y columna en píxeles del segmento, como en el cuaderno de Colab)")
+    L.append("CANDIDATOS, de mejor a peor (fila y columna en píxeles del segmento, como en el cuaderno de Colab)")
     L.append("-" * 72)
-    top = tope(res["candidatos"], a.max_candidatos)
+    top = list(res["candidatos"])          # el informe lleva SIEMPRE todos (las imágenes, solo los N mejores)
     if not top:
         L.append("Ninguna mancha cumple los criterios. No hay indicios con estos métodos.")
     else:
@@ -2305,10 +2505,14 @@ def escribir_informe(p, res, png_mapa, png_cand, csvp):
     L.append("")
     L.append("ARCHIVOS")
     L.append("-" * 72)
+    n_img = len(tope(res["candidatos"], a.max_candidatos))
     L.append(f"Mapa:        {png_mapa}")
     if png_cand:
         L.append(f"Candidatos:  {png_cand}")
-    L.append(f"Tabla CSV:   {csvp}")
+    L.append(f"Tabla CSV:   {csvp}  (todos los candidatos)")
+    if n_img < len(res["candidatos"]):
+        L.append(f"Imágenes, miniaturas y recortes: los {n_img} mejores de {len(res['candidatos'])} "
+                 "(«Máximo de candidatos» en los ajustes; 0 = todos).")
     with open(p, "w", encoding="utf-8-sig", newline="\r\n" if os.name == "nt" else "\n") as fh:
         fh.write("\n".join(L) + "\n")
 
@@ -2340,10 +2544,30 @@ def _leer_json_ajustes():
         return {}
     try:
         d = json.loads(p.read_text(encoding="utf-8-sig"))
-        return d if isinstance(d, dict) else {}
+        return _migrar_ajustes(d) if isinstance(d, dict) else {}
     except Exception as e:
         print(f"      (el archivo de ajustes {p} no se puede leer ({e}); uso los valores por defecto)")
         return {}
+
+
+def _migrar_ajustes(d):
+    """Ajustes guardados por versiones anteriores (sin «ajustes_version»): ahí «máximo de candidatos» = 0
+    era el valor por defecto (todos), que con fragmentos grandes deja el paso 6 colgado. Si sigue en 0,
+    se pasa al nuevo valor por defecto (60). Quien quiera todos puede volver a poner 0: ya se respeta."""
+    try:
+        ver = int(d.get("ajustes_version", 1))
+    except Exception:
+        ver = 1
+    if ver < AJUSTES_VERSION:
+        try:
+            if "max_candidatos" in d and int(d["max_candidatos"]) == 0:
+                d["max_candidatos"] = MAX_CANDIDATOS
+        except Exception:
+            pass
+        t = d.get("textos")
+        if isinstance(t, dict) and str(t.get("max_candidatos", "")).strip() == "0":
+            t["max_candidatos"] = str(MAX_CANDIDATOS)
+    return d
 
 
 def cargar_ajustes():
@@ -2384,6 +2608,7 @@ def guardar_ajustes(d, textos=None, panel_abierto=None, exportar_recortes=None):
     datos["exportar_recortes"] = bool(previo.get("exportar_recortes", False) if exportar_recortes is None else exportar_recortes)
     datos["guardado"] = datetime.datetime.now().isoformat(timespec="seconds")
     datos["version"] = VERSION
+    datos["ajustes_version"] = AJUSTES_VERSION
     tmp = None
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -2484,7 +2709,7 @@ def validar_ajustes(t):
         v["percentil"] = p
     except ValueError:
         err.append("El umbral (percentil) tiene que ser un número entre 50 y 99,99, por ejemplo 98,5.")
-    v["max_candidatos"] = entero("Máximo de candidatos", t.get("max_candidatos", ""), 0, 10 ** 6, "0 (sin límite)")
+    v["max_candidatos"] = entero("Máximo de candidatos", t.get("max_candidatos", ""), 0, 10 ** 6, "60 (0 = sin límite)")
     v["dpi"] = entero("Calidad de imagen (DPI)", t.get("dpi", ""), 50, 600, 110)
     red = dict(REDUCCIONES)
     if str(t.get("reduccion", "")) not in red:
@@ -2662,7 +2887,7 @@ def elegir_con_ventana(encontrados, cache="", ajustes=None, estado=None):
                                                  textvariable=V["percentil"], width=7, name="percentil"),
          "más alto = menos candidatos")
     fila(4, 2, "Máximo de candidatos", tk.Spinbox(panel, from_=0, to=100000, textvariable=V["max_candidatos"], width=7,
-                                                  name="max_candidatos"), "0 = sin límite")
+                                                  name="max_candidatos"), "en imágenes y recortes; 0 = todos")
     fila(6, 0, "Reducción de resolución", ttk.Combobox(panel, values=nombres_red, textvariable=V["reduccion"],
                                                        state="readonly", width=11, name="reduccion"))
     fila(6, 2, "Calidad de imagen, DPI", tk.Spinbox(panel, from_=50, to=600, increment=10, textvariable=V["dpi"],
@@ -2933,7 +3158,8 @@ def main():
     ap.add_argument("--percentil", type=float, default=PERCENTIL_UMBRAL, help="percentil del umbral (98.5)")
     ap.add_argument("--comprobar-solapes", action="store_true",
                     help="termina con error si algún texto de las figuras se pisa con otro (para pruebas)")
-    ap.add_argument("--max-candidatos", type=int, default=MAX_CANDIDATOS, help="máximo de candidatos que se muestran (0 = todos, por defecto)")
+    ap.add_argument("--max-candidatos", type=int, default=MAX_CANDIDATOS, help=f"máximo de candidatos en mapas, imagen de candidatos, miniaturas y recortes ({MAX_CANDIDATOS} por defecto; "
+                         "0 = todos). El informe y el CSV llevan siempre todos")
     ap.add_argument("--sin-crujido", action="store_true", help="no calcula el mapa de crujido")
     ap.add_argument("--reduccion", type=int, default=0, help="reducir resolución 1, 2, 4... (0 = automático)")
     ap.add_argument("--salida", default="", help="carpeta de resultados (por defecto, junto al programa)")
