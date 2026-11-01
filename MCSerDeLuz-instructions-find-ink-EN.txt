@@ -48,7 +48,8 @@ Window buttons: «Analizar» (analyse the selected segments), «Elegir otro zip.
 segments of 180 MB or less; missing ones are DOWNLOADED, about 100 MB each, about 1 GB in total;
 it resumes if interrupted), checkbox «Exportar recortes...» (one cropped PNG per candidate).
 «Ajustes avanzados ▸» (collapsed by default) holds the same settings as the command-line options,
-including a «Barrido» section; values are validated, remembered, and «Restablecer valores» resets them.
+including a «Barrido» section; values are validated and saved automatically on every
+change and on close (also with the X) to %APPDATA%\MCSerDeLuz\buscar-tinta-ajustes.json; «Restablecer valores» resets them.
 All candidates are shown (no cap), with a scrollable thumbnail window after each analysis.
 A progress bar with the estimated time remaining and a «Cancelar» button is shown while it works.
 

@@ -87,7 +87,8 @@ Al abrirlo busca los segmentos (zip o carpeta) en el Escritorio, Descargas y Doc
   - «Ajustes avanzados ▸» (cerrado al principio): capas delante/detrás, tamaño del trazo, percentil
     del umbral, máximo de candidatos (0 = sin límite), sin crujido, reducción, carpeta de resultados,
     DPI y una parte «Barrido» (sin descargas, MB máximo, % mínimo de papiro, umbral z, repetir y
-    carpeta de descargas). «Restablecer valores» vuelve a los de siempre. Se recuerdan para la próxima vez.
+    carpeta de descargas). «Restablecer valores» vuelve a los de siempre. Se guardan solos al
+    cambiarlos y al cerrar (también con la X) en %APPDATA%\MCSerDeLuz\buscar-tinta-ajustes.json.
   - Al terminar se abre una ventana con TODOS los candidatos en miniatura y barra de desplazamiento.
   - Mientras trabaja sale una barra de progreso con el tiempo que queda aproximado y un botón
     «Cancelar». Sin ventana (--sin-ventana) la barra aparece como texto en la consola.

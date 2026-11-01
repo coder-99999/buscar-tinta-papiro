@@ -2334,24 +2334,106 @@ def archivo_ajustes():
     return base / "MCSerDeLuz" / "buscar-tinta-ajustes.json"
 
 
-def cargar_ajustes():
+def _leer_json_ajustes():
+    p = archivo_ajustes()
+    if not p.exists():
+        return {}
     try:
-        d = json.loads(archivo_ajustes().read_text(encoding="utf-8"))
-        return {k: d[k] for k in CLAVES_AJUSTES if k in d}
-    except Exception:
+        d = json.loads(p.read_text(encoding="utf-8-sig"))
+        return d if isinstance(d, dict) else {}
+    except Exception as e:
+        print(f"      (el archivo de ajustes {p} no se puede leer ({e}); uso los valores por defecto)")
         return {}
 
 
-def guardar_ajustes(d):
+def cargar_ajustes():
+    """Últimos valores VÁLIDOS guardados (los que se usan para analizar)."""
+    d = _leer_json_ajustes()
+    v, err = validar_ajustes(textos_de_ajustes(dict(AJUSTES_POR_DEFECTO, **{k: d[k] for k in CLAVES_AJUSTES if k in d})))
+    if err:                                   # algo raro en el archivo: me quedo con lo que sí vale, campo a campo
+        bueno = {}
+        base = textos_de_ajustes(AJUSTES_POR_DEFECTO)
+        for k in CLAVES_AJUSTES:
+            if k in d:
+                try:
+                    t = dict(base); t[k] = textos_de_ajustes(dict(AJUSTES_POR_DEFECTO, **{k: d[k]}))[k]
+                    vk, ek = validar_ajustes(t)
+                    if not ek:
+                        bueno[k] = vk[k]
+                except Exception:
+                    pass
+        return bueno
+    return {k: v[k] for k in CLAVES_AJUSTES if k in d}
+
+
+def cargar_estado_ventana():
+    """Lo que había escrito en la ventana (aunque no fuera válido), si el panel estaba abierto, recortes."""
+    d = _leer_json_ajustes()
+    t = d.get("textos") if isinstance(d.get("textos"), dict) else {}
+    return {"textos": {k: t[k] for k in CLAVES_AJUSTES if k in t}, "panel_abierto": bool(d.get("panel_abierto", False)),
+            "exportar_recortes": bool(d.get("exportar_recortes", False))}
+
+
+def guardar_ajustes(d, textos=None, panel_abierto=None, exportar_recortes=None):
+    """Guarda de forma atómica (archivo temporal + reemplazo). Devuelve (ruta, None) o (None, error)."""
+    p = archivo_ajustes()
+    previo = _leer_json_ajustes()
+    datos = {k: d[k] for k in CLAVES_AJUSTES if k in d}
+    datos["textos"] = textos if textos is not None else previo.get("textos", {})
+    datos["panel_abierto"] = bool(previo.get("panel_abierto", False) if panel_abierto is None else panel_abierto)
+    datos["exportar_recortes"] = bool(previo.get("exportar_recortes", False) if exportar_recortes is None else exportar_recortes)
+    datos["guardado"] = datetime.datetime.now().isoformat(timespec="seconds")
+    datos["version"] = VERSION
+    tmp = None
     try:
-        p = archivo_ajustes()
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({k: d[k] for k in CLAVES_AJUSTES if k in d}, ensure_ascii=False, indent=1),
-                     encoding="utf-8")
-        return p
+        tmp = p.with_name(f"{p.name}.{os.getpid()}.tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(datos, ensure_ascii=False, indent=1))
+            fh.flush()
+            os.fsync(fh.fileno())
+        for intento in range(5):              # en Windows un antivirus puede tenerlo abierto un momento
+            try:
+                os.replace(tmp, p)
+                break
+            except PermissionError:
+                if intento == 4:
+                    raise
+                time.sleep(0.15)
+        return p, None
     except Exception as e:
-        print(f"      (no pude guardar los ajustes: {e})")
-        return None
+        print(f"      (NO pude guardar los ajustes en {p}: {e})", flush=True)
+        try:
+            if tmp is not None and tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+        return None, str(e)
+
+
+def textos_de_ajustes(d):
+    """Valores -> lo que se ve escrito en la ventana."""
+    def num(x):
+        try:
+            return f"{float(x):g}"
+        except Exception:
+            return str(x)
+    t = {"delante": ",".join(map(str, d["delante"])) if isinstance(d["delante"], (list, tuple)) else str(d["delante"]),
+         "detras": ",".join(map(str, d["detras"])) if isinstance(d["detras"], (list, tuple)) else str(d["detras"])}
+    for k in ("tam_min", "tam_max", "max_candidatos", "dpi"):
+        t[k] = str(d[k])
+    t["percentil"] = num(d["percentil"])
+    try:
+        t["reduccion"] = {b: a for a, b in REDUCCIONES}.get(int(d["reduccion"] or 0), str(d["reduccion"]))
+    except Exception:
+        t["reduccion"] = str(d["reduccion"])
+    t["salida"] = d["salida"] or carpeta_resultados_defecto()
+    for k in ("limite_mb", "min_papiro", "z_umbral"):
+        t[k] = num(d[k])
+    t["cache"] = d["cache"] or str(carpeta_cache(argparse.Namespace(cache="")))
+    for k in ("sin_crujido", "sin_descargas", "rehacer"):
+        t[k] = bool(d[k])
+    return t
 
 
 def carpeta_resultados_defecto():
@@ -2459,10 +2541,13 @@ def ajustes_iniciales(args):
     """Por defecto < guardados en el JSON < lo que se haya pasado en la línea de órdenes."""
     d = dict(AJUSTES_POR_DEFECTO)
     d.update(cargar_ajustes())
-    for k in CLAVES_AJUSTES:
-        if getattr(args, k, AJUSTES_POR_DEFECTO[k]) != AJUSTES_POR_DEFECTO[k]:
-            d[k] = getattr(args, k)
+    for k in claves_de_linea_de_ordenes(args):
+        d[k] = getattr(args, k)
     return d
+
+
+def claves_de_linea_de_ordenes(args):
+    return [k for k in CLAVES_AJUSTES if getattr(args, k, AJUSTES_POR_DEFECTO[k]) != AJUSTES_POR_DEFECTO[k]]
 
 
 def aplicar_ajustes(args, v):
@@ -2481,7 +2566,7 @@ def aplicar_ajustes(args, v):
 # ====================================================================================
 #  VENTANA DE SELECCIÓN (tkinter)
 # ====================================================================================
-def elegir_con_ventana(encontrados, cache="", ajustes=None):
+def elegir_con_ventana(encontrados, cache="", ajustes=None, estado=None):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
     eleccion = {"rutas": [], "barrido": None, "recortes": False, "ajustes": None}
@@ -2529,7 +2614,8 @@ def elegir_con_ventana(encontrados, cache="", ajustes=None):
         anadir(filedialog.askdirectory(title="Elige la carpeta del segmento (la que contiene surface-volumes)"))
 
     # ---------------------------------------------------------------- ajustes avanzados (plegable)
-    var_rec = tk.BooleanVar(value=False)
+    estado = estado or {}
+    var_rec = tk.BooleanVar(value=bool(estado.get("exportar_recortes", False)))
     tk.Checkbutton(abajo, text="Exportar recortes de cada candidato (PNG con capa 15, mapa, escala y coordenadas)",
                    variable=var_rec, font=("Segoe UI", 10)).pack(pady=(8, 0))
     boton_av = tk.Button(abajo, text="Ajustes avanzados ▸", relief="flat", fg="#1f3f8a", font=("Segoe UI", 10, "bold"),
@@ -2543,18 +2629,24 @@ def elegir_con_ventana(encontrados, cache="", ajustes=None):
     V_cruj = VB["sin_crujido"]
     nombres_red = [n for n, _ in REDUCCIONES]
 
+    def poner_textos(t):
+        for k, x in t.items():
+            if k in BOOL:
+                VB[k].set(bool(x))
+            elif k in V:
+                if k == "reduccion" and str(x) not in nombres_red:
+                    continue
+                if k in ("salida", "cache") and not str(x).strip():
+                    continue                        # vacío = la carpeta por defecto, que ya está puesta
+                V[k].set(str(x))
+
     def poner(d):
-        V["delante"].set(",".join(map(str, d["delante"]))); V["detras"].set(",".join(map(str, d["detras"])))
-        for k in ("tam_min", "tam_max", "max_candidatos", "dpi"):
-            V[k].set(str(d[k]))
-        V["percentil"].set(f"{float(d['percentil']):g}")
-        V["reduccion"].set({b: a for a, b in REDUCCIONES}.get(int(d["reduccion"] or 0), str(d["reduccion"])))
-        V["salida"].set(d["salida"] or carpeta_resultados_defecto())
-        for k in ("limite_mb", "min_papiro", "z_umbral"):
-            V[k].set(f"{float(d[k]):g}")
-        V["cache"].set(d["cache"] or str(carpeta_cache(argparse.Namespace(cache=""))))
-        for k in BOOL:
-            VB[k].set(bool(d[k]))
+        poner_textos(textos_de_ajustes(d))
+
+    def textos_actuales():
+        t = {k: V[k].get() for k in V}
+        t.update({k: bool(VB[k].get()) for k in BOOL})
+        return t
 
     def fila(r, c, texto, w, pista=None):
         tk.Label(panel, text=texto, font=("Segoe UI", 9)).grid(row=r, column=c, sticky="e", padx=(4, 2), pady=2)
@@ -2614,12 +2706,82 @@ def elegir_con_ventana(encontrados, cache="", ajustes=None):
         if c:
             V["cache"].set(c)
     tk.Button(fd, text="Elegir...", command=elegir_cache, name="elegir_cache").pack(side="left", padx=4)
-    tk.Button(panel, text="Restablecer valores", command=lambda: poner(AJUSTES_POR_DEFECTO),
+    def restablecer():
+        poner(AJUSTES_POR_DEFECTO)
+        guardar_ahora()
+    tk.Button(panel, text="Restablecer valores", command=restablecer,
               name="restablecer").grid(row=13, column=1, sticky="w", pady=(6, 0))
-    tk.Label(panel, text=f"Se guardan en {archivo_ajustes()}", fg="#666666", font=("Segoe UI", 8)).grid(
-        row=13, column=2, columnspan=2, sticky="w", pady=(6, 0))
+    tk.Label(panel, text=f"Se guardan solos en {archivo_ajustes()}", fg="#666666", font=("Segoe UI", 8),
+             wraplength=520, justify="left").grid(row=13, column=2, columnspan=2, sticky="w", pady=(6, 0))
+    estado_lbl = tk.Label(panel, text="", fg="#2f6b2f", font=("Segoe UI", 8), name="estado_guardado")
+    estado_lbl.grid(row=14, column=1, columnspan=3, sticky="w")
     poner(ajustes)
+    poner_textos(estado.get("textos") or {})       # lo que había escrito la última vez (aunque no fuera válido)
+    ultimo_valido = dict(ajustes)
     abierto = {"v": False}
+    pendiente = {"id": None, "cargado": False}
+
+    def guardar_ahora(*_):
+        """Guarda YA: los valores válidos (si uno no vale, el último bueno de ese campo) y el texto tal cual."""
+        if pendiente["id"] is not None:
+            try:
+                raiz.after_cancel(pendiente["id"])
+            except Exception:
+                pass
+            pendiente["id"] = None
+        t = textos_actuales()
+        v, err = validar_ajustes(t)
+        if not err:
+            ultimo_valido.update(v)
+        else:                                       # campo a campo, sin tirar lo demás
+            for k in CLAVES_AJUSTES:
+                prueba = textos_de_ajustes(ultimo_valido); prueba[k] = t[k]
+                try:
+                    vk, ek = validar_ajustes(prueba)
+                except Exception:
+                    continue
+                if not ek:
+                    ultimo_valido[k] = vk[k]
+        tg = dict(t)                                # la carpeta por defecto no se guarda fija (por si mueves el programa)
+        if os.path.normcase(os.path.abspath(str(tg["salida"]).strip() or ".")) == os.path.normcase(carpeta_resultados_defecto()):
+            tg["salida"] = ""
+        if os.path.normcase(os.path.abspath(str(tg["cache"]).strip() or ".")) == \
+                os.path.normcase(str(carpeta_cache(argparse.Namespace(cache="")))):
+            tg["cache"] = ""
+        ruta, fallo = guardar_ajustes(ultimo_valido, textos=tg, panel_abierto=abierto["v"],
+                                      exportar_recortes=bool(var_rec.get()))
+        try:
+            if fallo:
+                estado_lbl.configure(text=f"No he podido guardar los ajustes: {fallo}", fg="#a00000")
+            else:
+                estado_lbl.configure(text=f"Ajustes guardados ({datetime.datetime.now():%H:%M:%S})"
+                                          + ("  -  ojo: hay algún valor no válido; se usará el último bueno" if err else ""),
+                                     fg="#8a4b00" if err else "#2f6b2f")
+        except Exception:
+            pass
+        if os.environ.get("MCS_PRUEBA_VENTANA"):
+            print("PRUEBA guardado", ruta or fallo, flush=True)
+        return err
+
+    def programar(*_):
+        if not pendiente["cargado"]:
+            return
+        if pendiente["id"] is not None:
+            try:
+                raiz.after_cancel(pendiente["id"])
+            except Exception:
+                pass
+        pendiente["id"] = raiz.after(500, guardar_ahora)
+
+    for var in list(V.values()) + list(VB.values()) + [var_rec]:
+        var.trace_add("write", programar)
+
+    def cerrar():
+        try:
+            guardar_ahora()
+        finally:
+            raiz.destroy()
+    raiz.protocol("WM_DELETE_WINDOW", cerrar)
 
     def plegar(mostrar=None):
         abierto["v"] = (not abierto["v"]) if mostrar is None else bool(mostrar)
@@ -2633,18 +2795,21 @@ def elegir_con_ventana(encontrados, cache="", ajustes=None):
         extra = panel.winfo_reqheight() + 8 if abierto["v"] else 0
         alto = min(ALTO + extra, raiz.winfo_screenheight() - 70)
         raiz.geometry(f"{min(max(900, raiz.winfo_reqwidth()), raiz.winfo_screenwidth() - 20)}x{alto}")
+        if pendiente["cargado"]:
+            programar()
     boton_av.configure(command=plegar)
     raiz._plegar = plegar
+    if estado.get("panel_abierto"):
+        plegar(True)
+    pendiente["cargado"] = True
 
     def leer():
-        textos = {k: V[k].get() for k in V}
-        textos.update({k: VB[k].get() for k in BOOL})
-        v, err = validar_ajustes(textos)
+        guardar_ahora()                       # se guarda siempre, también si algo no vale
+        v, err = validar_ajustes(textos_actuales())
         if err:
             plegar(True)
             messagebox.showerror("Revisa los ajustes avanzados", "\n\n".join(err))
             return None
-        guardar_ajustes(v)
         return v
 
     def analizar_sel():
@@ -2692,7 +2857,7 @@ def elegir_con_ventana(encontrados, cache="", ajustes=None):
     tk.Button(botones, text="Elegir carpeta...", width=18, command=elegir_carpeta).pack(side="left", padx=6)
     tk.Button(botones, text="Barrido PHerc 1447 (pequeños)...", width=28, bg="#dde8ff",
               command=barrido_sel, name="barrido").pack(side="left", padx=6)
-    tk.Button(botones, text="Salir", width=10, command=raiz.destroy).pack(side="left", padx=6)
+    tk.Button(botones, text="Salir", width=10, command=cerrar, name="salir").pack(side="left", padx=6)
     tk.Label(abajo, text="Aviso: la tinta de carbono casi no cambia la densidad; el resultado son pistas débiles, no pruebas.",
              fg="#8a4b00", font=("Segoe UI", 9)).pack(pady=(0, 4))
     tk.Label(abajo, text="Barrido: descarga unos 100 MB por segmento que no tengas (cerca de 1 GB en total).",
@@ -2701,7 +2866,7 @@ def elegir_con_ventana(encontrados, cache="", ajustes=None):
         def posiciones():
             raiz.update_idletasks()
             pos = {}
-            for w in [boton_av, botones.nametowidget("analizar"), botones.nametowidget("barrido")] + (list(panel.winfo_children()) + list(fc.winfo_children())
+            for w in [boton_av, botones.nametowidget("analizar"), botones.nametowidget("barrido"), botones.nametowidget("salir")] + (list(panel.winfo_children()) + list(fc.winfo_children())
                                                                      + list(pb.winfo_children()) + list(fd.winfo_children())
                                                                      if abierto["v"] else []):
                 if w.winfo_ismapped():
@@ -2710,6 +2875,17 @@ def elegir_con_ventana(encontrados, cache="", ajustes=None):
                   json.dumps({k: v for k, v in pos.items() if not k.startswith("!")}), flush=True)
         raiz.after(400, posiciones)
         boton_av.configure(command=lambda: (plegar(), raiz.after(300, posiciones)))
+        print("PRUEBA valores", json.dumps({"textos": textos_actuales(), "panel_abierto": abierto["v"],
+                                            "exportar_recortes": bool(var_rec.get()),
+                                            "archivo": str(archivo_ajustes())}, ensure_ascii=False), flush=True)
+        if os.environ.get("MCS_PRUEBA_PONER"):        # prueba en Windows: cambia valores como si se escribieran
+            def poner_prueba():
+                d = json.loads(os.environ["MCS_PRUEBA_PONER"])
+                if d.pop("panel", False):
+                    plegar(True)
+                poner_textos(d)
+                print("PRUEBA puesto", flush=True)
+            raiz.after(800, poner_prueba)
     raiz.mainloop()
     return eleccion
 
@@ -2801,7 +2977,10 @@ def main():
                 print("  -", p)
         else:
             try:
-                el = elegir_con_ventana(encontrados, str(carpeta_cache(args)), ajustes_iniciales(args))
+                estado = cargar_estado_ventana()
+                for k in claves_de_linea_de_ordenes(args):     # lo de la línea de órdenes manda
+                    estado["textos"].pop(k, None)
+                el = elegir_con_ventana(encontrados, str(carpeta_cache(args)), ajustes_iniciales(args), estado)
                 rutas, modo_barrido = el["rutas"], el["barrido"]
                 args.exportar_recortes = args.exportar_recortes or el["recortes"]
                 if el.get("ajustes"):

@@ -36,6 +36,17 @@ jobs:
           $f = (Get-Content prueba64\MCSerDeLuz-candidatos-tinta-20990101000001.csv).Count - 1
           Write-Host "sin tope: $n recortes, $f filas en el CSV"
           if ($n -lt 50 -or $f -ne $n) { exit 1 }
+      - name: Prueba de ajustes (se guardan al cerrar con la X y vuelven al abrir)
+        shell: pwsh
+        timeout-minutes: 10
+        run: |
+          $env:APPDATA = Join-Path $env:RUNNER_TEMP "appdata-prueba"
+          New-Item -ItemType Directory -Force $env:APPDATA | Out-Null
+          python prueba_ajustes.py .\dist\MCSerDeLuz-buscar-tinta-papiro.exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $j = Join-Path $env:APPDATA "MCSerDeLuz\buscar-tinta-ajustes.json"
+          if (-not (Test-Path $j)) { Write-Host "no está $j"; exit 1 }
+          Get-Content $j
           Get-FileHash dist\MCSerDeLuz-buscar-tinta-papiro.exe -Algorithm SHA256
       - uses: actions/upload-artifact@v4
         with:
@@ -51,7 +62,7 @@ jobs:
           python-version: "3.12"
       - name: Instalar dependencias
         run: |
-          sudo apt-get update && sudo apt-get install -y python3-tk
+          sudo apt-get update && sudo apt-get install -y python3-tk xvfb openbox wmctrl xdotool
           python -m pip install --upgrade pip numpy zarr numcodecs tifffile matplotlib scipy pyinstaller
       - name: PyInstaller (Linux)
         run: >
@@ -72,6 +83,12 @@ jobs:
           n=$(ls prueba64/MCSerDeLuz-recortes-20990101000001/*.png | wc -l); f=$(( $(wc -l < prueba64/MCSerDeLuz-candidatos-tinta-20990101000001.csv) - 1 ))
           echo "sin tope: $n recortes, $f filas en el CSV"; test $n -ge 50 && test $f -eq $n
           sha256sum dist/MCSerDeLuz-buscar-tinta-papiro-linux
+      - name: Prueba de ajustes (Xvfb, escribiendo de verdad y cerrando con la X)
+        timeout-minutes: 10
+        run: |
+          export HOME=$RUNNER_TEMP/home-prueba; unset XDG_CONFIG_HOME; mkdir -p $HOME/Desktop
+          xvfb-run -a -s "-screen 0 1366x768x24" bash -c 'openbox & sleep 2; python prueba_ajustes.py ./dist/MCSerDeLuz-buscar-tinta-papiro-linux'
+          cat $HOME/.config/MCSerDeLuz/buscar-tinta-ajustes.json
       - uses: actions/upload-artifact@v4
         with:
           name: MCSerDeLuz-buscar-tinta-papiro-linux
