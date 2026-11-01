@@ -1,4 +1,4 @@
-# buscar-tinta-papiro (private)
+# buscar-tinta-papiro
 
 No-AI search for weak ink hints in Vesuvius Challenge PHerc. 1447 surface-volume segments. Runs on Windows and Linux; the UI and reports are in Spanish.
 
